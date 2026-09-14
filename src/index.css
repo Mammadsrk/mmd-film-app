@@ -1,0 +1,81 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --oled-black: #030305;
+    --card-surface: #0a0a0f;
+    --crimson-accent: #e50914;
+    --crimson-glow: rgba(229, 9, 20, 0.45);
+  }
+
+  body {
+    background-color: #030305;
+    color: #f3f4f6;
+    font-family: 'Outfit', 'Vazirmatn', system-ui, -apple-system, sans-serif;
+    overflow-x: hidden;
+    user-select: none;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+}
+
+/* Persian / RTL Typography Helper */
+.font-persian {
+  font-family: 'Vazirmatn', system-ui, sans-serif;
+  direction: rtl;
+}
+
+/* Hide scrollbars for horizontal TV carousels while keeping scrollable */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* TV Focus Rings & Hover Aesthetics */
+.tv-focusable {
+  outline: none;
+  transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.22s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.22s ease;
+}
+
+/* Prevent any red outline or harsh box shadow on inputs */
+input.tv-focusable,
+input.tv-focused,
+.no-tv-focus-ring {
+  outline: none !important;
+  box-shadow: none !important;
+  border-color: inherit !important;
+  transform: none !important;
+}
+
+/* Elegant and subtle focus ring for TV navigation when active */
+.tv-focusable:focus-visible,
+.tv-focusable.tv-focused:not(input):not(.no-tv-focus-ring) {
+  transform: scale3d(1.02, 1.02, 1);
+  border-color: rgba(245, 158, 11, 0.6) !important;
+  box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.4), 0 8px 25px rgba(0, 0, 0, 0.7) !important;
+  z-index: 25;
+}
+
+/* Fallback card height for browsers that do not calculate aspect-ratio correctly */
+.media-card-poster {
+  height: 280px;
+  min-height: 280px;
+  width: 100%;
+}
+
+@media (min-width: 640px) {
+  .media-card-poster {
+    height: 320px;
+    min-height: 320px;
+  }
+}
+
+@media (min-width: 1024px) {
+  .media-card-poster {
+    height: 340px;
+    min-height: 340px;
+  }
+}

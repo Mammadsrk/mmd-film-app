@@ -1,0 +1,6 @@
+{
+  "name": "MMD FILM",
+  "description": "TV-optimized movie and series discovery and streaming dashboard with spatial navigation and server proxying",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
