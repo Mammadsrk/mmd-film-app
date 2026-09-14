@@ -230,10 +230,14 @@ export interface GlobalEmbedMirror {
   name: string;
   url: string;
   provider: string;
+  badge?: string;
+  status?: string;
   isDefault?: boolean;
 }
 
 export interface GlobalTorrentItem {
+  name?: string;
+  title?: string;
   quality: string;
   type: string;
   size: string;
@@ -241,6 +245,7 @@ export interface GlobalTorrentItem {
   peers: number;
   magnetUrl: string;
   torrentFileUrl?: string;
+  webStreamUrl?: string;
   hash: string;
   dateUploaded?: string;
 }

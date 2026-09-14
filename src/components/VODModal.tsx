@@ -34,6 +34,9 @@ import {
   Database,
   CheckCheck,
   Zap,
+  RotateCcw,
+  AlertTriangle,
+  Radio,
 } from 'lucide-react';
 import {
   MediaItem,
@@ -51,11 +54,32 @@ import {
   GlobalTorrentItem,
 } from '../types';
 import { GlobalStreamingPanel } from './GlobalStreamingPanel';
+import { WebTorrentPlayer } from './WebTorrentPlayer';
+import { HlsVideoPlayer } from './HlsVideoPlayer';
+import WebTorrent from 'webtorrent';
 import {
   fetchSourceAvailability,
   clientAvailabilityCache,
   getAvailabilityCacheKey,
 } from '../lib/availabilityCache';
+
+// Public WebRTC trackers that browser clients can connect to via WebSocket
+const PUBLIC_WEBRTC_TRACKERS = [
+  'wss://tracker.btorrent.xyz',
+  'wss://tracker.openwebtorrent.com',
+  'wss://tracker.webtorrent.dev',
+  'wss://tracker.files.fm:7073/announce',
+];
+
+const appendWebRtcTrackers = (magnetUri: string): string => {
+  let magnet = magnetUri;
+  for (const tr of PUBLIC_WEBRTC_TRACKERS) {
+    if (!magnet.includes(encodeURIComponent(tr))) {
+      magnet += `&tr=${encodeURIComponent(tr)}`;
+    }
+  }
+  return magnet;
+};
 
 interface VODModalProps {
   item: MediaItem | null;
@@ -66,17 +90,34 @@ export const VODModal: React.FC<VODModalProps> = ({ item, onClose }) => {
   const [details, setDetails] = useState<MovieDetailsData | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isPlayingVideo, setIsPlayingVideo] = useState<boolean>(false);
-  const [videoPlayMode, setVideoPlayMode] = useState<'trailer' | 'full_movie' | 'episode' | 'global'>('trailer');
+  const [videoPlayMode, setVideoPlayMode] = useState<'trailer' | 'full_movie' | 'episode' | 'global' | 'torrent'>('trailer');
+  const [activePlayingTorrent, setActivePlayingTorrent] = useState<GlobalTorrentItem | null>(null);
   const [selectedTrailerIndex, setSelectedTrailerIndex] = useState<number>(0);
   const [copiedLink, setCopiedLink] = useState<boolean>(false);
   const [copiedStreamUrl, setCopiedStreamUrl] = useState<string | null>(null);
   const [showEnglishOverview, setShowEnglishOverview] = useState<boolean>(false);
 
+  // WebTorrent Client & Streaming State
+  const torrentVideoRef = useRef<HTMLVideoElement | null>(null);
+  const webtorrentClientRef = useRef<any>(null);
+  const activeTorrentInstanceRef = useRef<any>(null);
+  const [torrentStatus, setTorrentStatus] = useState<
+    'idle' | 'connecting' | 'metadata' | 'buffering' | 'playing' | 'failed'
+  >('idle');
+  const [torrentPeers, setTorrentPeers] = useState<number>(0);
+  const [torrentProgress, setTorrentProgress] = useState<number>(0);
+  const [torrentDownloadSpeed, setTorrentDownloadSpeed] = useState<string>('0 KB/s');
+  const [torrentUploadSpeed, setTorrentUploadSpeed] = useState<string>('0 KB/s');
+  const [torrentErrorMessage, setTorrentErrorMessage] = useState<string | null>(null);
+  const [torrentCopied, setTorrentCopied] = useState<boolean>(false);
+  const [torrentFileName, setTorrentFileName] = useState<string>('');
+  const [torrentRetryCount, setTorrentRetryCount] = useState<number>(0);
+
   // Global streaming state
   const [globalStreamingData, setGlobalStreamingData] = useState<GlobalStreamingData | null>(null);
   const [isLoadingGlobalStreams, setIsLoadingGlobalStreams] = useState<boolean>(false);
-  const [selectedGlobalMirrorId, setSelectedGlobalMirrorId] = useState<string>('mirror_vidsrc_movie');
-  const [selectedGlobalTier, setSelectedGlobalTier] = useState<'tier1_direct' | 'tier2_embed' | 'tier3_torrent'>('tier1_direct');
+  const [selectedGlobalMirrorId, setSelectedGlobalMirrorId] = useState<string>('mirror_vidlink_movie');
+  const [selectedGlobalTier, setSelectedGlobalTier] = useState<'tier1_direct' | 'tier2_embed' | 'tier3_torrent'>('tier2_embed');
   const [selectedDirectQualityIndex, setSelectedDirectQualityIndex] = useState<number>(0);
   const [isSubtitleEnabled, setIsSubtitleEnabled] = useState<boolean>(true);
   const [copiedMagnetHash, setCopiedMagnetHash] = useState<string | null>(null);
@@ -105,6 +146,32 @@ export const VODModal: React.FC<VODModalProps> = ({ item, onClose }) => {
   const [isQualityModalOpen, setIsQualityModalOpen] = useState<boolean>(false);
   const [selectedQualityUrl, setSelectedQualityUrl] = useState<string | null>(null);
   const [selectedQualityProfile, setSelectedQualityProfile] = useState<string | null>(null);
+
+  // Helper to detect if any URL or stream is a magnet URI
+  const isMagnetUri = (url?: string | null): boolean =>
+    typeof url === 'string' && url.trim().toLowerCase().startsWith('magnet:?');
+
+  // Active magnet URI detection logic across all stream providers & modes
+  const detectedMagnetUri = useMemo(() => {
+    if (activePlayingTorrent?.magnetUrl && isMagnetUri(activePlayingTorrent.magnetUrl)) {
+      return activePlayingTorrent.magnetUrl.trim();
+    }
+    if (isMagnetUri(selectedQualityUrl)) {
+      return selectedQualityUrl!.trim();
+    }
+    if (isMagnetUri(activePlayingEpisode?.streamUrl)) {
+      return activePlayingEpisode!.streamUrl!.trim();
+    }
+    return null;
+  }, [activePlayingTorrent, selectedQualityUrl, activePlayingEpisode]);
+
+  const handleCopyMagnet = (magnetUrl?: string | null) => {
+    const target = magnetUrl || detectedMagnetUri || activePlayingTorrent?.magnetUrl;
+    if (!target) return;
+    navigator.clipboard.writeText(target);
+    setTorrentCopied(true);
+    setTimeout(() => setTorrentCopied(false), 3000);
+  };
 
   // Source availability state for prioritizing verified sources
   const [sourceAvailabilities, setSourceAvailabilities] = useState<Record<string, boolean>>({});
@@ -412,15 +479,27 @@ export const VODModal: React.FC<VODModalProps> = ({ item, onClose }) => {
       }
     };
 
-    // Parallel Fetch: Tier 1, 2, 3 Global Streaming & Torrent Data
+    fetchDetails();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [item]);
+
+  // Parallel Fetch: Tier 1, 2, 3 Global Streaming & Torrent Data (synchronized with Season/Episode)
+  useEffect(() => {
+    if (!item) return;
+    let isMounted = true;
     setIsLoadingGlobalStreams(true);
+    const sNum = activePlayingEpisode?.seasonNumber || selectedSeasonNumber || 1;
+    const epNum = activePlayingEpisode?.episodeNumber || 1;
     const globalParams = new URLSearchParams({
       title: item.title || '',
       tmdbId: String(item.tmdbId || ''),
       imdbId: String(item.imdbId || ''),
       type: item.type || 'movie',
-      season: String(selectedSeasonNumber || 1),
-      episode: '1',
+      season: String(sNum),
+      episode: String(epNum),
     });
     fetch(`/api/global-streams?${globalParams.toString()}`)
       .then(res => res.json())
@@ -439,12 +518,10 @@ export const VODModal: React.FC<VODModalProps> = ({ item, onClose }) => {
         if (isMounted) setIsLoadingGlobalStreams(false);
       });
 
-    fetchDetails();
-
     return () => {
       isMounted = false;
     };
-  }, [item]);
+  }, [item, selectedSeasonNumber, activePlayingEpisode?.episodeNumber]);
 
   // Preload links helper
   const preloadEpisodeLinks = async (uid: string, provider?: string, pageUrl?: string) => {
@@ -803,47 +880,89 @@ export const VODModal: React.FC<VODModalProps> = ({ item, onClose }) => {
                           </button>
                         </div>
                       )}
+
+                      {/* Torrent Mode Button */}
+                      {activePlayingTorrent && (
+                        <button
+                          type="button"
+                          onClick={() => setVideoPlayMode('torrent')}
+                          className={`tv-focusable px-3 py-1 rounded-lg text-xs font-medium transition-all flex items-center gap-1.5 ${
+                            videoPlayMode === 'torrent'
+                              ? 'bg-cyan-600 text-white font-bold shadow-sm'
+                              : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700'
+                          }`}
+                        >
+                          <Play className="w-3.5 h-3.5 text-cyan-300" />
+                          <span>تورنت ({activePlayingTorrent.quality || 'P2P'})</span>
+                        </button>
+                      )}
                     </div>
 
                     {/* Global controls bar */}
                     {videoPlayMode === 'global' && (
                       <div className="flex items-center gap-1.5 mr-2 pr-2 border-r border-zinc-700 flex-wrap">
+                        <span className="text-[11px] font-bold text-zinc-400 font-persian">انتخاب سرور آنلاین:</span>
+                        {(globalStreamingData?.embedMirrors || []).map((mirror, mIdx) => {
+                          const isCur = selectedGlobalMirrorId === mirror.id;
+                          const shortLabel = mirror.name.split(':')[0] || `سرور ${mIdx + 1}`;
+                          return (
+                            <button
+                              key={mirror.id}
+                              type="button"
+                              onClick={() => {
+                                setSelectedGlobalMirrorId(mirror.id);
+                                setSelectedGlobalTier('tier2_embed');
+                              }}
+                              className={`tv-focusable px-2.5 py-0.5 rounded text-[11px] font-bold transition-all flex items-center gap-1 ${
+                                isCur
+                                  ? 'bg-indigo-600 text-white shadow-sm ring-1 ring-white/30'
+                                  : 'bg-zinc-800/90 text-zinc-300 hover:bg-zinc-700 hover:text-white'
+                              }`}
+                              title={mirror.name}
+                            >
+                              <span className={`w-1.5 h-1.5 rounded-full ${isCur ? 'bg-emerald-400 animate-pulse' : 'bg-zinc-500'}`} />
+                              <span>{shortLabel}</span>
+                            </button>
+                          );
+                        })}
+
+                        {/* Dynamic Fallback Switcher: Cycle to next available mirror */}
                         <button
                           type="button"
-                          onClick={() => setSelectedGlobalTier('tier1_direct')}
-                          className={`px-2 py-0.5 rounded text-[11px] font-bold transition-all ${
-                            selectedGlobalTier === 'tier1_direct'
-                              ? 'bg-indigo-600 text-white'
-                              : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200'
-                          }`}
+                          onClick={() => {
+                            const mirrors = globalStreamingData?.embedMirrors || [];
+                            if (mirrors.length === 0) return;
+                            const curIdx = mirrors.findIndex(m => m.id === selectedGlobalMirrorId);
+                            const nextIdx = (curIdx + 1) % mirrors.length;
+                            setSelectedGlobalMirrorId(mirrors[nextIdx].id);
+                            setSelectedGlobalTier('tier2_embed');
+                          }}
+                          className="tv-focusable px-2.5 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 text-[11px] font-bold font-persian flex items-center gap-1 transition-all shadow-sm cursor-pointer ml-1"
+                          title="در صورت بروز خطا یا قطع تصویر، به سرور بعدی سوئیچ کنید"
                         >
-                          مستقیم CDN
+                          <RotateCcw className="w-3 h-3 text-amber-400" />
+                          <span>سرور کار نکرد / سرور بعدی</span>
                         </button>
-                        <button
-                          type="button"
-                          onClick={() => setSelectedGlobalTier('tier2_embed')}
-                          className={`px-2 py-0.5 rounded text-[11px] font-bold transition-all ${
-                            selectedGlobalTier === 'tier2_embed'
-                              ? 'bg-cyan-600 text-white'
-                              : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200'
-                          }`}
-                        >
-                          آینه امبد
-                        </button>
-                        {selectedGlobalTier === 'tier1_direct' && (
-                          <button
-                            type="button"
-                            onClick={() => setIsSubtitleEnabled(prev => !prev)}
-                            className={`px-2 py-0.5 rounded text-[11px] font-medium flex items-center gap-1 ${
-                              isSubtitleEnabled
-                                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
-                                : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200'
-                            }`}
-                          >
-                            <Subtitles className="w-3 h-3" />
-                            <span>{isSubtitleEnabled ? 'زیرنویس: فعال' : 'زیرنویس: خاموش'}</span>
-                          </button>
-                        )}
+
+                        {/* Open current mirror in external full tab */}
+                        {(() => {
+                          const curMirror = globalStreamingData?.embedMirrors?.find(m => m.id === selectedGlobalMirrorId) || globalStreamingData?.embedMirrors?.[0];
+                          const targetUrl = curMirror?.url || (isSeriesMode
+                            ? `https://vidsrc.cc/v2/embed/tv/${item.tmdbId || '1396'}/${selectedSeasonNumber || 1}/${activePlayingEpisode?.episodeNumber || 1}`
+                            : `https://vidsrc.cc/v2/embed/movie/${item.tmdbId || '438631'}`);
+                          return (
+                            <a
+                              href={targetUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="tv-focusable px-2 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white text-[11px] font-persian flex items-center gap-1 transition-all mr-1"
+                              title="باز کردن استریم در تب جدید"
+                            >
+                              <span>تمام‌صفحه خارجی</span>
+                              <ExternalLink className="w-3 h-3" />
+                            </a>
+                          );
+                        })()}
                       </div>
                     )}
 
@@ -882,77 +1001,97 @@ export const VODModal: React.FC<VODModalProps> = ({ item, onClose }) => {
 
                 {/* Player Frame or HTML5 Video */}
                 <div className="relative flex-1 w-full h-full bg-black">
-                  {videoPlayMode === 'global' ? (
+                  {videoPlayMode === 'torrent' && activePlayingTorrent ? (
+                    <WebTorrentPlayer
+                      torrent={activePlayingTorrent}
+                      title={item.titleFa || item.title || ''}
+                      onFallbackToMirrors={() => {
+                        setVideoPlayMode('global');
+                        setSelectedGlobalTier('tier2_embed');
+                      }}
+                    />
+                  ) : videoPlayMode === 'global' ? (
                     selectedGlobalTier === 'tier1_direct' && (globalStreamingData?.directStreams?.length || 0) > 0 ? (
-                      <div className="relative w-full h-full bg-black">
-                        <video
-                          key={globalStreamingData?.directStreams[selectedDirectQualityIndex]?.proxiedUrl || globalStreamingData?.directStreams[0]?.proxiedUrl}
-                          src={globalStreamingData?.directStreams[selectedDirectQualityIndex]?.proxiedUrl || globalStreamingData?.directStreams[0]?.proxiedUrl}
-                          controls
-                          autoPlay
-                          playsInline
-                          crossOrigin="anonymous"
-                          className="w-full h-full object-contain"
-                        >
-                          {isSubtitleEnabled && (
-                            <track
-                              kind="subtitles"
-                              src={`/api/subtitles/vtt?title=${encodeURIComponent(item.title || '')}`}
-                              srcLang="fa"
-                              label="زیرنویس فارسی (Persian)"
-                              default
-                            />
-                          )}
-                          مرورگر شما از پخش ویدیو پشتیبانی نمی‌کند.
-                        </video>
-                      </div>
-                    ) : (
-                      <iframe
-                        className="w-full h-full border-0"
-                        src={
-                          globalStreamingData?.embedMirrors?.find(m => m.id === selectedGlobalMirrorId)?.url ||
-                          globalStreamingData?.embedMirrors?.[0]?.url ||
-                          `https://vidsrc.to/embed/movie/${item.tmdbId || item.imdbId || '438631'}`
-                        }
-                        title="پخش سرور جهانی"
-                        allowFullScreen
-                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                      <HlsVideoPlayer
+                        key={globalStreamingData?.directStreams[selectedDirectQualityIndex]?.proxiedUrl || globalStreamingData?.directStreams[0]?.proxiedUrl}
+                        src={globalStreamingData?.directStreams[selectedDirectQualityIndex]?.proxiedUrl || globalStreamingData?.directStreams[0]?.proxiedUrl}
+                        poster={details?.backdropUrl || item.backdropUrl}
+                        subtitlesUrl={isSubtitleEnabled ? `/api/subtitles/vtt?title=${encodeURIComponent(item.title || '')}` : undefined}
+                        onFallback={() => setSelectedGlobalTier('tier2_embed')}
                       />
+                    ) : (
+                      <div className="relative w-full h-full">
+                        {/* Instant Quick-Fallback Button on Player Corner */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const mirrors = globalStreamingData?.embedMirrors || [];
+                            if (mirrors.length === 0) return;
+                            const curIdx = mirrors.findIndex(m => m.id === selectedGlobalMirrorId);
+                            const nextIdx = (curIdx + 1) % mirrors.length;
+                            setSelectedGlobalMirrorId(mirrors[nextIdx].id);
+                            setSelectedGlobalTier('tier2_embed');
+                          }}
+                          className="absolute top-3 left-3 z-30 px-3 py-1.5 rounded-xl bg-black/80 hover:bg-black/95 text-amber-300 hover:text-amber-200 border border-amber-500/40 text-xs font-bold font-persian flex items-center gap-1.5 backdrop-blur-md transition-all shadow-lg cursor-pointer"
+                          title="در صورت بروز خطا، تصویر سیاه یا قطعی به سرور آینه بعدی بروید"
+                        >
+                          <RotateCcw className="w-3.5 h-3.5" />
+                          <span>سرور کار نکرد؟ سوئیچ سرور</span>
+                        </button>
+
+                        <iframe
+                          key={
+                            globalStreamingData?.embedMirrors?.find(m => m.id === selectedGlobalMirrorId)?.url ||
+                            globalStreamingData?.embedMirrors?.[0]?.url ||
+                            'global-stream-player'
+                          }
+                          className="w-full h-full border-0"
+                          src={
+                            globalStreamingData?.embedMirrors?.find(m => m.id === selectedGlobalMirrorId)?.url ||
+                            globalStreamingData?.embedMirrors?.[0]?.url ||
+                            (isSeriesMode
+                              ? `https://vidsrc.cc/v2/embed/tv/${item.tmdbId || '1396'}/${selectedSeasonNumber || 1}/${activePlayingEpisode?.episodeNumber || 1}`
+                              : `https://vidsrc.cc/v2/embed/movie/${item.tmdbId || '438631'}`)
+                          }
+                          title="پخش سرور جهانی"
+                          sandbox="allow-scripts allow-same-origin allow-forms allow-presentation"
+                          allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
+                          allowFullScreen
+                          referrerPolicy="origin"
+                        />
+                      </div>
                     )
                   ) : videoPlayMode === 'episode' && activePlayingEpisode ? (
                     activePlayingEpisode.streamUrl ? (
-                      <video
+                      <HlsVideoPlayer
+                        key={activePlayingEpisode.streamUrl}
                         src={activePlayingEpisode.streamUrl}
-                        controls
-                        autoPlay
-                        className="w-full h-full object-contain"
-                      >
-                        مرورگر شما از پخش ویدیو پشتیبانی نمی‌کند.
-                      </video>
+                        poster={details?.backdropUrl || item.backdropUrl}
+                      />
                     ) : (
                       <iframe
                         className="w-full h-full border-0"
                         src={activePlayingEpisode.embedUrl}
                         title={activePlayingEpisode.title}
+                        sandbox="allow-scripts allow-same-origin allow-forms allow-presentation allow-popups"
+                        allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
                         allowFullScreen
                       />
                     )
                   ) : videoPlayMode === 'full_movie' && fullMovie ? (
                     (selectedQualityUrl || fullMovie.qualities?.[0]?.url) ? (
-                      <video
-                        key={selectedQualityUrl || fullMovie.qualities?.[0]?.url}
+                      <HlsVideoPlayer
+                        key={selectedQualityUrl || fullMovie.qualities[0].url}
                         src={selectedQualityUrl || fullMovie.qualities[0].url}
-                        controls
-                        autoPlay
-                        className="w-full h-full object-contain"
-                      >
-                        مرورگر شما از پخش ویدیو پشتیبانی نمی‌کند.
-                      </video>
+                        poster={details?.backdropUrl || item.backdropUrl}
+                      />
                     ) : (
                       <iframe
                         className="w-full h-full border-0"
                         src={fullMovie.embedUrl || (fullMovie.provider === 'Namasha' ? `https://www.namasha.com/embed/${fullMovie.uid}` : `https://www.aparat.com/video/video/embed/videohash/${fullMovie.uid}/vt/frame`)}
                         title={fullMovie.title}
+                        sandbox="allow-scripts allow-same-origin allow-forms allow-presentation allow-popups"
+                        allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
                         allowFullScreen
                       />
                     )
@@ -961,7 +1100,8 @@ export const VODModal: React.FC<VODModalProps> = ({ item, onClose }) => {
                       className="w-full h-full border-0"
                       src={activeTrailer.embedUrl || activeTrailer.url}
                       title={activeTrailer.name || 'فیلم تریلر'}
-                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                      sandbox="allow-scripts allow-same-origin allow-forms allow-presentation allow-popups"
+                      allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
                       allowFullScreen
                     />
                   ) : (
@@ -1314,6 +1454,12 @@ export const VODModal: React.FC<VODModalProps> = ({ item, onClose }) => {
                         setIsPlayingVideo(true);
                         if (modalRef.current) modalRef.current.scrollTo({ top: 0, behavior: 'smooth' });
                       }}
+                      onPlayTorrent={(torrent) => {
+                        setActivePlayingTorrent(torrent);
+                        setVideoPlayMode('torrent');
+                        setIsPlayingVideo(true);
+                        if (modalRef.current) modalRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+                      }}
                       isSubtitleEnabled={isSubtitleEnabled}
                       onToggleSubtitle={() => setIsSubtitleEnabled(prev => !prev)}
                       mediaTitle={item.titleFa || item.title || ''}
@@ -1537,6 +1683,86 @@ export const VODModal: React.FC<VODModalProps> = ({ item, onClose }) => {
                 )}
               </section>
             )}
+
+          {/* =========================================================
+              SERIES GLOBAL STREAMING & TORRENT SECTION
+              For Series: High-speed international streaming & episode torrents
+             ========================================================= */}
+          {isSeriesMode && (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between pb-3 border-b border-zinc-800">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 rounded-xl bg-indigo-500/20 border border-indigo-500/40 text-indigo-400">
+                    <Globe className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h3 className="text-base sm:text-lg font-black text-zinc-100 font-persian">
+                        سرورهای جهانی پخش آنلاین و تورنت سریال
+                      </h3>
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                        فصل {selectedSeasonNumber || 1}
+                      </span>
+                    </div>
+                    <p className="text-xs text-zinc-400 mt-1 font-persian">
+                      پخش آنلاین با ۶ سرور پرسرعت بین‌المللی و دانلود تورنت قسمت‌های این فصل با سیدر بالا
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <GlobalStreamingPanel
+                data={globalStreamingData}
+                isLoading={isLoadingGlobalStreams}
+                selectedTier={selectedGlobalTier}
+                onSelectTier={setSelectedGlobalTier}
+                selectedDirectIndex={selectedDirectQualityIndex}
+                selectedQualityIndex={selectedDirectQualityIndex}
+                onSelectDirectIndex={(idx) => {
+                  setSelectedDirectQualityIndex(idx);
+                  setVideoPlayMode('global');
+                  setIsPlayingVideo(true);
+                  if (modalRef.current) modalRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+                }}
+                onSelectQualityIndex={(idx) => {
+                  setSelectedDirectQualityIndex(idx);
+                  setVideoPlayMode('global');
+                  setIsPlayingVideo(true);
+                  if (modalRef.current) modalRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+                }}
+                selectedMirrorId={selectedGlobalMirrorId}
+                onSelectMirrorId={(mirrorId) => {
+                  setSelectedGlobalMirrorId(mirrorId);
+                  setVideoPlayMode('global');
+                  setIsPlayingVideo(true);
+                  if (modalRef.current) modalRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+                }}
+                onSelectMirror={(mirrorId) => {
+                  setSelectedGlobalMirrorId(mirrorId);
+                  setVideoPlayMode('global');
+                  setIsPlayingVideo(true);
+                  if (modalRef.current) modalRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+                }}
+                onPlayMirror={(mirror) => {
+                  setSelectedGlobalMirrorId(mirror.id);
+                  setVideoPlayMode('global');
+                  setIsPlayingVideo(true);
+                  if (modalRef.current) modalRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+                }}
+                onPlayTorrent={(torrent) => {
+                  setActivePlayingTorrent(torrent);
+                  setVideoPlayMode('torrent');
+                  setIsPlayingVideo(true);
+                  if (modalRef.current) modalRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+                }}
+                isSubtitleEnabled={isSubtitleEnabled}
+                onToggleSubtitle={() => setIsSubtitleEnabled(prev => !prev)}
+                mediaTitle={item.titleFa || item.title || ''}
+                title={item.title || ''}
+                titleFa={item.titleFa || ''}
+              />
+            </div>
+          )}
 
           {/* =========================================================
               SECTION 2: IRANIAN SOURCE HUBS (DOWNLOAD WEBSITES)

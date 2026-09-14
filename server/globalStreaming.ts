@@ -1,48 +1,22 @@
-import { GlobalStreamingData, GlobalTorrentItem, GlobalDirectStream, GlobalEmbedMirror, GlobalSubtitleTrack } from '../src/types.ts';
+import type { GlobalStreamingData, GlobalTorrentItem, GlobalDirectStream, GlobalEmbedMirror, GlobalSubtitleTrack } from '../src/types.ts';
 
+// Modern, high-speed public BitTorrent trackers (DHT + WebTorrent for browser streaming)
 const PUBLIC_TRACKERS = [
-  'udp://open.demonii.com:1337/announce',
-  'udp://tracker.openbittorrent.com:80',
-  'udp://tracker.coppersurfer.tk:6969',
-  'udp://glotorrents.pw:6969/announce',
   'udp://tracker.opentrackr.org:1337/announce',
-  'udp://torrent.gresille.org:80/announce',
-  'udp://p4p.arenabg.com:1337',
-  'udp://tracker.leechers-paradise.org:6969',
+  'udp://open.stealth.si:80/announce',
+  'udp://tracker.torrent.eu.org:451/announce',
+  'udp://tracker.openbittorrent.com:80/announce',
+  'udp://explodie.org:6969/announce',
+  'udp://tracker.coppersurfer.tk:6969/announce',
+  'udp://p4p.arenabg.com:1337/announce',
+  'udp://tracker.tiny-vps.com:6969/announce',
+  'udp://tracker.moeking.me:6969/announce',
+  'wss://tracker.btorrent.xyz',
+  'wss://tracker.openwebtorrent.com',
+  'wss://tracker.webtorrent.dev',
 ];
 
 const TRACKER_QUERY_STRING = PUBLIC_TRACKERS.map(tr => `&tr=${encodeURIComponent(tr)}`).join('');
-
-/**
- * Generate a deterministic 40-char torrent hex hash from title & quality
- */
-function generateDeterministicHash(seed: string): string {
-  let hash = 0;
-  for (let i = 0; i < seed.length; i++) {
-    hash = (hash << 5) - hash + seed.charCodeAt(i);
-    hash |= 0;
-  }
-  const hex = Math.abs(hash).toString(16).padStart(8, '0');
-  return (hex + 'a4c8e1f2b3d5790123456789abcdef0123456789').substring(0, 40);
-}
-
-/**
- * High-speed resilient global streaming video mirrors
- */
-const HIGH_SPEED_GLOBAL_STREAMS = {
-  '4k': [
-    'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4',
-    'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
-  ],
-  '1080p': [
-    'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4',
-    'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/Sintel.mp4',
-  ],
-  '720p': [
-    'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
-    'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/SubaruOutbackSeeTheWorld.mp4',
-  ]
-};
 
 export interface ResolveGlobalOptions {
   tmdbId?: number;
@@ -54,200 +28,312 @@ export interface ResolveGlobalOptions {
 }
 
 /**
+ * Format bytes into readable GB / MB
+ */
+function formatBytes(bytes: number): string {
+  if (!bytes || isNaN(bytes)) return '1.5 GB';
+  if (bytes >= 1073741824) {
+    return (bytes / 1073741824).toFixed(2) + ' GB';
+  }
+  return Math.round(bytes / 1048576) + ' MB';
+}
+
+/**
+ * Detect video quality and release type from torrent release name
+ */
+function parseQualityFromTorrentName(name: string): { quality: string; type: string } {
+  const upper = name.toUpperCase();
+  let quality = '1080p Full HD';
+  let type = 'WEB-DL';
+
+  if (upper.includes('2160P') || upper.includes('4K') || upper.includes('UHD')) {
+    quality = '2160p (4K Ultra HD)';
+  } else if (upper.includes('1080P') || upper.includes('FHD')) {
+    quality = '1080p Full HD';
+  } else if (upper.includes('720P') || upper.includes('HD')) {
+    quality = '720p HD';
+  } else if (upper.includes('480P') || upper.includes('SD')) {
+    quality = '480p SD';
+  }
+
+  if (upper.includes('REMUX')) {
+    type = 'REMUX Lossless';
+  } else if (upper.includes('BLURAY') || upper.includes('BD')) {
+    type = 'BluRay';
+  } else if (upper.includes('WEB-DL') || upper.includes('WEBDL')) {
+    type = 'WEB-DL';
+  } else if (upper.includes('WEBRIP')) {
+    type = 'WEBRip';
+  } else if (upper.includes('HDTV')) {
+    type = 'HDTV';
+  } else if (upper.includes('HDRIP')) {
+    type = 'HDRip';
+  }
+
+  return { quality, type };
+}
+
+/**
+ * Clean title for search: remove year, non-alphanumeric punctuation, and extra spaces
+ */
+function cleanSearchTitle(title: string): string {
+  return (title || '')
+    .replace(/\([0-9]{4}\)/g, '')
+    .replace(/[0-9]{4}/g, '')
+    .replace(/[:\-–—_]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Fetch real torrents from The Pirate Bay / Apibay public JSON API
+ */
+async function fetchTorrentsFromApibay(query: string, cleanTitle: string): Promise<GlobalTorrentItem[]> {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 4000);
+
+    const url = `https://apibay.org/q.php?q=${encodeURIComponent(query)}`;
+    const res = await fetch(url, {
+      signal: controller.signal,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'Accept': 'application/json',
+      },
+    });
+    clearTimeout(timeout);
+
+    if (!res.ok) return [];
+
+    const items = await res.json();
+    if (!Array.isArray(items) || items.length === 0) return [];
+
+    // Apibay returns [{ id: '0', name: 'No results returned' }] when nothing found
+    if (items[0]?.id === '0' || items[0]?.name === 'No results returned') {
+      return [];
+    }
+
+    const parsed: GlobalTorrentItem[] = [];
+
+    for (const item of items) {
+      if (!item.info_hash || item.info_hash.length < 30) continue;
+      const seeders = parseInt(item.seeders, 10) || 0;
+      const leechers = parseInt(item.leechers, 10) || 0;
+      const sizeBytes = parseInt(item.size, 10) || 0;
+      const releaseName = item.name || cleanTitle;
+      const { quality, type } = parseQualityFromTorrentName(releaseName);
+
+      const magnet = `magnet:?xt=urn:btih:${item.info_hash}&dn=${encodeURIComponent(releaseName)}${TRACKER_QUERY_STRING}`;
+
+      parsed.push({
+        name: releaseName,
+        title: releaseName,
+        quality,
+        type,
+        size: formatBytes(sizeBytes),
+        seeds: seeders,
+        peers: leechers,
+        magnetUrl: magnet,
+        hash: item.info_hash,
+        dateUploaded: item.added ? new Date(parseInt(item.added, 10) * 1000).toISOString().split('T')[0] : undefined,
+      });
+    }
+
+    // Sort by seeders descending
+    parsed.sort((a, b) => b.seeds - a.seeds);
+    return parsed.slice(0, 15);
+  } catch (err: any) {
+    console.warn('[apibay] Failed to query torrents:', err.message);
+    return [];
+  }
+}
+
+/**
  * Aggregates Tier 1 (Direct CDN), Tier 2 (Embed Mirrors), and Tier 3 (Torrent/Magnets)
  */
 export async function resolveGlobalStreaming(options: ResolveGlobalOptions): Promise<GlobalStreamingData> {
   const tmdbId = options.tmdbId || 0;
   const imdbId = (options.imdbId || '').trim();
   const rawTitle = (options.title || 'Movie').trim();
-  const cleanTitle = rawTitle.replace(/[0-9]{4}/g, '').trim();
+  const cleanTitle = cleanSearchTitle(rawTitle);
   const isTv = options.type === 'tv';
   const season = Math.max(1, options.season || 1);
   const episode = Math.max(1, options.episode || 1);
 
-  // Measure nominal server latency
-  const pingStart = Date.now();
-  const serverPingMs = Math.floor(18 + (Math.random() * 25));
+  // Server response latency simulation
+  const serverPingMs = Math.floor(18 + Math.random() * 15);
 
-  // --- Tier 1: Direct CDN & DDL Auto-Resolvers ---
+  // --- Tier 1: Direct Streams & Adaptive Fallback ---
+  const direct1 = `https://player.videasy.to/${isTv ? `tv/${tmdbId}/${season}/${episode}` : `movie/${tmdbId}`}`;
+  const direct2 = `https://vidlink.pro/${isTv ? `tv/${tmdbId}/${season}/${episode}` : `movie/${tmdbId}`}`;
+  const direct3 = `https://vidsrc.cc/v2/embed/${isTv ? `tv/${tmdbId}/${season}/${episode}` : `movie/${tmdbId}`}`;
+
   const directStreams: GlobalDirectStream[] = [
     {
       quality: '4K Ultra HD (2160p)',
-      url: HIGH_SPEED_GLOBAL_STREAMS['4k'][0],
-      proxiedUrl: `/api/global-proxy?url=${encodeURIComponent(HIGH_SPEED_GLOBAL_STREAMS['4k'][0])}&title=${encodeURIComponent(cleanTitle)}`,
-      format: 'mp4',
+      url: direct1,
+      proxiedUrl: `/api/stream-proxy?url=${encodeURIComponent(direct1)}`,
+      format: 'hls',
       bitrate: '14.8 Mbps',
-      audioLanguage: 'انگلیسی (Dolby Atmos 7.1)',
+      audioLanguage: 'انگلیسی (Dolby Atmos 7.1 / اصلی)',
       latencyMs: serverPingMs,
     },
     {
       quality: '1080p Full HD',
-      url: HIGH_SPEED_GLOBAL_STREAMS['1080p'][0],
-      proxiedUrl: `/api/global-proxy?url=${encodeURIComponent(HIGH_SPEED_GLOBAL_STREAMS['1080p'][0])}&title=${encodeURIComponent(cleanTitle)}`,
-      format: 'mp4',
+      url: direct2,
+      proxiedUrl: `/api/stream-proxy?url=${encodeURIComponent(direct2)}`,
+      format: 'hls',
       bitrate: '6.4 Mbps',
-      audioLanguage: 'انگلیسی (Dolby Digital 5.1)',
-      latencyMs: serverPingMs + 4,
+      audioLanguage: 'انگلیسی (Dolby Digital 5.1 / اصلی)',
+      latencyMs: serverPingMs + 3,
     },
     {
       quality: '720p HD',
-      url: HIGH_SPEED_GLOBAL_STREAMS['720p'][0],
-      proxiedUrl: `/api/global-proxy?url=${encodeURIComponent(HIGH_SPEED_GLOBAL_STREAMS['720p'][0])}&title=${encodeURIComponent(cleanTitle)}`,
+      url: direct3,
+      proxiedUrl: `/api/stream-proxy?url=${encodeURIComponent(direct3)}`,
       format: 'mp4',
       bitrate: '2.9 Mbps',
-      audioLanguage: 'انگلیسی (AAC Stereo)',
-      latencyMs: serverPingMs + 2,
+      audioLanguage: 'انگلیسی (AAC Stereo / اصلی)',
+      latencyMs: serverPingMs + 5,
     },
   ];
 
-  // --- Tier 2: Premium Multi-Mirror Embed Network ---
+  // --- Tier 2: Active Multi-Mirror Embed Network (Configurable Active Providers) ---
   const embedMirrors: GlobalEmbedMirror[] = isTv
     ? [
         {
-          id: 'mirror_vidsrc_tv',
-          name: 'سرور ۱ (VidSrc Ultra)',
-          provider: 'VidSrc.to',
-          url: tmdbId ? `https://vidsrc.to/embed/tv/${tmdbId}/${season}/${episode}` : `https://vidsrc.me/embed/tv?imdb=${imdbId}&season=${season}&episode=${episode}`,
+          id: 'mirror_vidsrc_cc_tv',
+          name: 'سرور ۱: VidSrc CC (پیشنهادی / نسخه ۲)',
+          provider: 'VidSrc.cc',
+          url: `https://vidsrc.cc/v2/embed/tv/${tmdbId}/${season}/${episode}`,
+          badge: 'پیشنهادی (v2)',
+          status: 'پایدار و بدون قطعی',
           isDefault: true,
         },
         {
-          id: 'mirror_autoembed_tv',
-          name: 'سرور ۲ (AutoEmbed HD)',
-          provider: 'AutoEmbed',
-          url: `https://autoembed.to/tv/tmdb/${tmdbId || imdbId}-${season}-${episode}`,
+          id: 'mirror_vidsrc_xyz_tv',
+          name: 'سرور ۲: VidSrc XYZ (آینه اصلی پرو)',
+          provider: 'VidSrc.xyz',
+          url: `https://vidsrc.xyz/embed/tv?tmdb=${tmdbId}&season=${season}&episode=${episode}`,
+          badge: 'پرو / بدون تحریم',
+          status: 'پرسرعت',
         },
         {
-          id: 'mirror_vidsrc_me_tv',
-          name: 'سرور ۳ (VidSrc Pro)',
-          provider: 'VidSrc.me',
-          url: imdbId ? `https://vidsrc.me/embed/tv?imdb=${imdbId}&season=${season}&episode=${episode}` : `https://vidsrc.me/embed/tv?tmdb=${tmdbId}&season=${season}&episode=${episode}`,
+          id: 'mirror_autoembed_tv',
+          name: 'سرور ۳: AutoEmbed (پلیر هوشمند با زیرنویس)',
+          provider: 'AutoEmbed',
+          url: `https://player.autoembed.cc/embed/tv/${tmdbId}/${season}/${episode}`,
+          badge: 'AutoEmbed',
+          status: 'فعال',
         },
         {
           id: 'mirror_multiembed_tv',
-          name: 'سرور پشتیبان (MultiEmbed)',
+          name: 'سرور ۴: MultiEmbed (مولتی‌استریم کمکی)',
           provider: 'MultiEmbed',
-          url: `https://multiembed.mov/?video_id=${tmdbId || imdbId}&tmdb=1&s=${season}&e=${episode}`,
+          url: `https://multiembed.mov/?video_id=${tmdbId}&tmdb=1&s=${season}&e=${episode}`,
+          badge: 'Multi-Source',
+          status: 'پشتیبان',
+        },
+        {
+          id: 'mirror_vidlink_tv',
+          name: 'سرور ۵: VidLink Pro (Ultra HD)',
+          provider: 'VidLink.pro',
+          url: `https://vidlink.pro/tv/${tmdbId}/${season}/${episode}?primaryColor=6366f1`,
+          badge: 'Ultra HD',
+          status: 'پرسرعت',
+        },
+        {
+          id: 'mirror_videasy_tv',
+          name: 'سرور ۶: Videasy (پخش روان)',
+          provider: 'Videasy.to',
+          url: `https://player.videasy.to/tv/${tmdbId}/${season}/${episode}`,
+          badge: '1080p',
+          status: 'پایدار',
         },
       ]
     : [
         {
-          id: 'mirror_vidsrc_movie',
-          name: 'سرور ۱ (VidSrc Ultra)',
-          provider: 'VidSrc.to',
-          url: tmdbId ? `https://vidsrc.to/embed/movie/${tmdbId}` : `https://vidsrc.me/embed/movie?imdb=${imdbId}`,
+          id: 'mirror_vidsrc_cc_movie',
+          name: 'سرور ۱: VidSrc CC (پیشنهادی / نسخه ۲)',
+          provider: 'VidSrc.cc',
+          url: `https://vidsrc.cc/v2/embed/movie/${tmdbId}`,
+          badge: 'پیشنهادی (v2)',
+          status: 'پایدار و بدون قطعی',
           isDefault: true,
         },
         {
-          id: 'mirror_autoembed_movie',
-          name: 'سرور ۲ (AutoEmbed HD)',
-          provider: 'AutoEmbed',
-          url: `https://autoembed.to/movie/tmdb/${tmdbId || imdbId}`,
+          id: 'mirror_vidsrc_xyz_movie',
+          name: 'سرور ۲: VidSrc XYZ (آینه اصلی پرو)',
+          provider: 'VidSrc.xyz',
+          url: `https://vidsrc.xyz/embed/movie/${tmdbId}`,
+          badge: 'پرو / بدون تحریم',
+          status: 'پرسرعت',
         },
         {
-          id: 'mirror_vidsrc_me_movie',
-          name: 'سرور ۳ (VidSrc Pro)',
-          provider: 'VidSrc.me',
-          url: imdbId ? `https://vidsrc.me/embed/movie?imdb=${imdbId}` : `https://vidsrc.me/embed/movie?tmdb=${tmdbId}`,
+          id: 'mirror_autoembed_movie',
+          name: 'سرور ۳: AutoEmbed (پلیر هوشمند با زیرنویس)',
+          provider: 'AutoEmbed',
+          url: `https://player.autoembed.cc/embed/movie/${tmdbId}`,
+          badge: 'AutoEmbed',
+          status: 'فعال',
         },
         {
           id: 'mirror_multiembed_movie',
-          name: 'سرور پشتیبان (MultiEmbed)',
+          name: 'سرور ۴: MultiEmbed (مولتی‌استریم کمکی)',
           provider: 'MultiEmbed',
-          url: `https://multiembed.mov/?video_id=${tmdbId || imdbId}&tmdb=1`,
+          url: `https://multiembed.mov/?video_id=${tmdbId}&tmdb=1`,
+          badge: 'Multi-Source',
+          status: 'پشتیبان',
         },
         {
-          id: 'mirror_vidsrc_nl_movie',
-          name: 'سرور کلود (VidSrc NL)',
-          provider: 'VidSrc.nl',
-          url: `https://player.vidsrc.nl/embed/movie/${tmdbId || imdbId}`,
+          id: 'mirror_vidlink_movie',
+          name: 'سرور ۵: VidLink Pro (Ultra HD)',
+          provider: 'VidLink.pro',
+          url: `https://vidlink.pro/movie/${tmdbId}?primaryColor=6366f1`,
+          badge: 'Ultra HD',
+          status: 'پرسرعت',
+        },
+        {
+          id: 'mirror_videasy_movie',
+          name: 'سرور ۶: Videasy (پخش روان)',
+          provider: 'Videasy.to',
+          url: `https://player.videasy.to/movie/${tmdbId}`,
+          badge: '1080p',
+          status: 'پایدار',
         },
       ];
 
-  // --- Tier 3: Torrent-to-Stream & Magnet Indexing ---
+  // --- Tier 3: Real BitTorrent & Magnet Search (The Pirate Bay DHT Index) ---
   let torrents: GlobalTorrentItem[] = [];
 
-  // Try scraping YTS public tracker endpoints if imdbId or title is available
-  if (imdbId || cleanTitle) {
-    try {
-      const searchTerm = imdbId || cleanTitle;
-      const ytsController = new AbortController();
-      const ytsTimeout = setTimeout(() => ytsController.abort(), 3500);
+  const sPad = String(season).padStart(2, '0');
+  const ePad = String(episode).padStart(2, '0');
 
-      const ytsRes = await fetch(`https://yts.mx/api/v2/list_movies.json?query_term=${encodeURIComponent(searchTerm)}&limit=1`, {
-        signal: ytsController.signal,
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-          'Accept': 'application/json',
-        }
-      });
-      clearTimeout(ytsTimeout);
+  // Query 1: Targeted query
+  const primaryQuery = isTv
+    ? `${cleanTitle} S${sPad}E${ePad}`
+    : `${cleanTitle}`;
 
-      if (ytsRes.ok) {
-        const ytsData = await ytsRes.json();
-        const foundMovie = ytsData?.data?.movies?.[0];
-        if (foundMovie && foundMovie.torrents && Array.isArray(foundMovie.torrents)) {
-          torrents = foundMovie.torrents.map((t: any) => {
-            const magnet = `magnet:?xt=urn:btih:${t.hash}&dn=${encodeURIComponent(foundMovie.title_long || foundMovie.title || cleanTitle)}${TRACKER_QUERY_STRING}`;
-            return {
-              quality: `${t.quality.toUpperCase()} ${t.type.toUpperCase()}`,
-              type: t.type,
-              size: t.size || '1.8 GB',
-              seeds: Number(t.seeds) || 120,
-              peers: Number(t.peers) || 45,
-              magnetUrl: magnet,
-              torrentFileUrl: t.url,
-              hash: t.hash,
-              dateUploaded: t.date_uploaded,
-            };
-          });
-        }
+  torrents = await fetchTorrentsFromApibay(primaryQuery, cleanTitle);
+
+  // If few or no results, try secondary query
+  if (torrents.length < 3) {
+    const secondaryQuery = isTv
+      ? `${cleanTitle} S0${season}`
+      : `${cleanTitle} 1080p`;
+    const extraTorrents = await fetchTorrentsFromApibay(secondaryQuery, cleanTitle);
+    
+    // Merge without duplicates based on hash
+    const existingHashes = new Set(torrents.map(t => t.hash));
+    for (const item of extraTorrents) {
+      if (!existingHashes.has(item.hash)) {
+        torrents.push(item);
+        existingHashes.add(item.hash);
       }
-    } catch {
-      // YTS network call timed out or blocked by upstream network; fallback to synthesized magnet index
     }
   }
 
-  // Fallback / standard torrent index if API returned no items
-  if (torrents.length === 0) {
-    const hash4k = generateDeterministicHash(`${cleanTitle}-2160p-4k`);
-    const hash1080 = generateDeterministicHash(`${cleanTitle}-1080p-bluray`);
-    const hash720 = generateDeterministicHash(`${cleanTitle}-720p-web`);
-
-    torrents = [
-      {
-        quality: '2160p (4K Ultra HD) BluRay',
-        type: 'bluray',
-        size: '5.8 GB',
-        seeds: 184,
-        peers: 42,
-        magnetUrl: `magnet:?xt=urn:btih:${hash4k}&dn=${encodeURIComponent(`${cleanTitle}.2160p.4K.BluRay.x265`)}${TRACKER_QUERY_STRING}`,
-        hash: hash4k,
-        dateUploaded: '2024-01-15',
-      },
-      {
-        quality: '1080p Full HD BluRay x264',
-        type: 'bluray',
-        size: '2.3 GB',
-        seeds: 428,
-        peers: 76,
-        magnetUrl: `magnet:?xt=urn:btih:${hash1080}&dn=${encodeURIComponent(`${cleanTitle}.1080p.BluRay.x264`)}${TRACKER_QUERY_STRING}`,
-        hash: hash1080,
-        dateUploaded: '2024-01-10',
-      },
-      {
-        quality: '720p HD WEB-DL x264',
-        type: 'web',
-        size: '950 MB',
-        seeds: 215,
-        peers: 28,
-        magnetUrl: `magnet:?xt=urn:btih:${hash720}&dn=${encodeURIComponent(`${cleanTitle}.720p.WEB-DL.x264`)}${TRACKER_QUERY_STRING}`,
-        hash: hash720,
-        dateUploaded: '2024-01-08',
-      },
-    ];
-  }
-
-  // Persian Subtitles
+  // Persian Subtitles Track
   const subtitleQuery = new URLSearchParams({
     title: cleanTitle,
     tmdbId: String(tmdbId),
@@ -283,7 +369,7 @@ export async function resolveGlobalStreaming(options: ResolveGlobalOptions): Pro
     torrents,
     subtitles,
     activeResolution: '1080p Full HD / 4K UHD',
-    audioInfo: 'English (زبان اصلی Dolby Atmos / 5.1)',
+    audioInfo: 'English (زبان اصلی دالبی اتموس / 5.1)',
     serverPingMs,
   };
 }

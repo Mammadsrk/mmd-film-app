@@ -2218,9 +2218,17 @@ app.get('/api/hubs', (req: Request, res: Response) => {
 
 /* ==========================================================================
    6. Video Stream & Download Proxy (/api/stream-proxy)
-   Bypasses Hotlink/CORS restrictions, adds Iranian spoofed headers,
+   Bypasses Hotlink/CORS restrictions, adds upstream masquerading headers,
    supports HTTP Range chunk streaming for HTML5 player & external players.
    ========================================================================== */
+app.options('/api/stream-proxy', (req: Request, res: Response) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Range, Content-Type, Accept, Origin, Referer');
+  res.setHeader('Access-Control-Expose-Headers', 'Content-Range, Content-Length, Accept-Ranges, Content-Type');
+  res.sendStatus(204);
+});
+
 app.get('/api/stream-proxy', async (req: Request, res: Response) => {
   const mediaUrl = (req.query.url as string || '').trim();
   const download = req.query.download === '1' || req.query.download === 'true';
@@ -2229,20 +2237,32 @@ app.get('/api/stream-proxy', async (req: Request, res: Response) => {
     return res.status(400).json({ error: 'Missing url parameter' });
   }
 
+  // Inject CORS and streaming headers immediately
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Range, Content-Type, Accept, Origin, Referer');
+  res.setHeader('Access-Control-Expose-Headers', 'Content-Range, Content-Length, Accept-Ranges, Content-Type');
+  res.setHeader('Accept-Ranges', 'bytes');
+
   try {
     const parsedUrl = new URL(mediaUrl);
     const filename = path.basename(parsedUrl.pathname) || 'video.mp4';
+    const ext = path.extname(parsedUrl.pathname).toLowerCase();
 
-    // Prepare proxy headers: simulate domestic browser request
+    // Prepare proxy headers: simulate desktop browser request with Referer/User-Agent masquerading
     const proxyHeaders: Record<string, string> = {
-      ...IRANIAN_SPOOFED_HEADERS,
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
       'Referer': `${parsedUrl.origin}/`,
       'Origin': parsedUrl.origin,
+      'Accept': '*/*',
+      'Accept-Language': 'en-US,en;q=0.9,fa;q=0.8',
     };
 
     // Forward byte range if requested by HTML5 video element or download manager
     if (req.headers.range) {
       proxyHeaders['Range'] = req.headers.range as string;
+      // Prevent gzip/brotli from mangling range offsets
+      proxyHeaders['Accept-Encoding'] = 'identity';
     }
 
     let upstreamResponse = await fetch(mediaUrl, {
@@ -2252,7 +2272,7 @@ app.get('/api/stream-proxy', async (req: Request, res: Response) => {
 
     let contentType = upstreamResponse.headers.get('content-type') || '';
 
-    // If upstream rejects (403, 404, or returns XML/HTML error page like Upera "قطع فیلترشکن")
+    // If upstream rejects (403, 404, or returns XML/HTML error page)
     if (!upstreamResponse.ok || contentType.includes('xml') || (contentType.includes('html') && !mediaUrl.includes('.m3u8'))) {
       console.warn(`Upstream failed (${upstreamResponse.status}, ${contentType}) for: ${mediaUrl}`);
 
@@ -2275,9 +2295,9 @@ app.get('/api/stream-proxy', async (req: Request, res: Response) => {
       }
     }
 
-    // If still failing or blocked by CDN anti-leech (e.g. ArvanCloud US IP block, 403, 404, or HTML error)
+    // If still failing or blocked by CDN anti-leech
     if (!upstreamResponse.ok || contentType.includes('xml') || (contentType.includes('html') && !mediaUrl.includes('.m3u8'))) {
-      console.warn(`[Proxy Resilient Engine] Upstream rejected (${upstreamResponse.status}, ${contentType}) for: ${mediaUrl}. Serving high-speed CDN video stream...`);
+      console.warn(`[Proxy Resilient Engine] Upstream rejected (${upstreamResponse.status}, ${contentType}) for: ${mediaUrl}. Serving reliable fallback stream...`);
 
       const is720 = mediaUrl.toLowerCase().includes('720');
       const reliableMirrorUrl = is720
@@ -2285,7 +2305,7 @@ app.get('/api/stream-proxy', async (req: Request, res: Response) => {
         : 'https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/1080/Big_Buck_Bunny_1080_10s_5MB.mp4';
 
       const mirrorHeaders: Record<string, string> = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
         'Accept': '*/*',
       };
       if (req.headers.range) {
@@ -2319,9 +2339,13 @@ app.get('/api/stream-proxy', async (req: Request, res: Response) => {
       }
     });
 
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Headers', 'Range, Content-Type');
-    res.setHeader('Access-Control-Expose-Headers', 'Content-Range, Content-Length, Accept-Ranges');
+    // Enforce proper MIME type if upstream sends generic octet-stream
+    if (!contentType || contentType.includes('octet-stream') || contentType.includes('text/plain')) {
+      if (ext === '.mp4') res.setHeader('content-type', 'video/mp4');
+      else if (ext === '.webm') res.setHeader('content-type', 'video/webm');
+      else if (ext === '.mkv') res.setHeader('content-type', 'video/x-matroska');
+      else if (ext === '.m3u8') res.setHeader('content-type', 'application/x-mpegURL');
+    }
 
     if (download) {
       res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"`);
