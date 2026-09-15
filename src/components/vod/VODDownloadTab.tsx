@@ -1,6 +1,7 @@
 import React from 'react';
 import { ExternalLink, CheckCircle2, ShieldCheck, Download, Search } from 'lucide-react';
 import { MediaItem, MovieDetailsData, MovieSourceHub } from '../../types';
+import { DirectDownloadsSection } from './DirectDownloadsSection';
 
 interface VODDownloadTabProps {
   sources?: any[];
@@ -76,21 +77,26 @@ export const VODDownloadTab: React.FC<VODDownloadTabProps> = ({
   ];
 
   return (
-    <div className="space-y-4">
-      {/* Header Info */}
-      <div className="flex items-center justify-between text-xs text-zinc-400 border-b border-zinc-800 pb-3 flex-wrap gap-2">
-        <div className="flex items-center gap-2">
-          <ShieldCheck className="w-4 h-4 text-emerald-400" />
-          <span className="text-zinc-300 font-medium">
-            {sources.length > 0
-              ? `${sources.length} مرجع معتبر برای دریافت مستقیم کیفیت‌های بلوری و صوت دوبله`
-              : 'مراجع دانلود اختصاصی سینمای ایران و جهان'}
+    <div className="space-y-6">
+      {/* High-Quality Direct Media Links (Automated Scraper) */}
+      <DirectDownloadsSection item={item} details={details} />
+
+      {/* External Reference Portals & Download Sources */}
+      <div className="space-y-4 pt-2">
+        {/* Header Info */}
+        <div className="flex items-center justify-between text-xs text-zinc-400 border-b border-zinc-800 pb-3 flex-wrap gap-2">
+          <div className="flex items-center gap-2">
+            <ShieldCheck className="w-4 h-4 text-emerald-400" />
+            <span className="text-zinc-300 font-medium">
+              {sources.length > 0
+                ? `${sources.length} مرجع دانلود خارجی برای کیفیت‌های وب‌دی‌ال و صوت اختصاصی`
+                : 'سایر مراجع معتبر سینمای ایران و جهان'}
+            </span>
+          </div>
+          <span className="text-[11px] text-zinc-500">
+            صفحات مرجع بدون نیاز به قندشکن
           </span>
         </div>
-        <span className="text-[11px] text-zinc-500">
-          دسترسی مستقیم و پایدار
-        </span>
-      </div>
 
       {/* Sources List Container */}
       <div className="sources-list grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -191,12 +197,13 @@ export const VODDownloadTab: React.FC<VODDownloadTabProps> = ({
         )}
       </div>
 
-      {/* Fallback Note if no direct sources were passed */}
-      {sources.length === 0 && (
-        <p className="no-sources-note text-xs text-zinc-400 text-center pt-2">
-          لینک‌های مستقیم مراجع پس از بررسی کیفی به‌روزرسانی می‌شوند.
-        </p>
-      )}
+        {/* Fallback Note if no direct sources were passed */}
+        {sources.length === 0 && (
+          <p className="no-sources-note text-xs text-zinc-400 text-center pt-2">
+            لینک‌های مستقیم مراجع پس از بررسی کیفی به‌روزرسانی می‌شوند.
+          </p>
+        )}
+      </div>
     </div>
   );
 };

@@ -24,6 +24,7 @@ import {
   AparatEpisode,
 } from '../../types';
 import { SmartStreamPlayer } from '../SmartStreamPlayer';
+import { DirectDownloadsSection } from './DirectDownloadsSection';
 
 interface VODStreamTabProps {
   item: MediaItem;
@@ -488,6 +489,9 @@ export const VODStreamTab: React.FC<VODStreamTabProps> = ({
               </div>
             </div>
           )}
+
+          {/* HIGH-QUALITY DIRECT DOWNLOADS SCRAPER SECTION */}
+          <DirectDownloadsSection item={item} details={details} />
         </div>
       )}
     </div>

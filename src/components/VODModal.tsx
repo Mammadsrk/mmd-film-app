@@ -828,6 +828,8 @@ export const VODModal: React.FC<VODModalProps> = ({ item, onClose }) => {
               <VODDownloadTab
                 sources={details?.sources || []}
                 isSeriesMode={isSeriesMode}
+                item={item}
+                details={details}
               />
             )}
 

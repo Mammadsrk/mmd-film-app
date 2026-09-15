@@ -13,6 +13,7 @@ import {
   IRANIAN_SPOOFED_HEADERS,
 } from './lib/sources.ts';
 import { resolveGlobalStreaming, generatePersianWebVTT } from './server/globalStreaming.ts';
+import { extractDirectSources } from './server/directExtractScraper.ts';
 
 const app = express();
 const PORT = 3000;
@@ -2528,6 +2529,36 @@ app.get('/api/check-sources', async (req: Request, res: Response) => {
     cached: isCached,
     sources,
   });
+});
+
+/* ==========================================================================
+   Automated Background Downloader Scraper (/api/extract-sources)
+   ========================================================================== */
+app.get('/api/extract-sources', async (req: Request, res: Response) => {
+  const query = ((req.query.query as string) || (req.query.title as string) || '').trim();
+  const year = ((req.query.year as string) || '').trim();
+
+  if (!query) {
+    return res.json({
+      success: true,
+      query: '',
+      sourcesCount: 0,
+      links: [],
+    });
+  }
+
+  try {
+    const result = await extractDirectSources(query, year);
+    return res.json(result);
+  } catch (err: any) {
+    return res.json({
+      success: true,
+      query,
+      sourcesCount: 0,
+      links: [],
+      error: err?.message || 'Scraping failed gracefully',
+    });
+  }
 });
 
 /* ==========================================================================
