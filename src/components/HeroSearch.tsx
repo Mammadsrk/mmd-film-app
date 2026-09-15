@@ -255,12 +255,17 @@ export const HeroSearch: React.FC<HeroSearchProps> = ({
       <div className="absolute top-0 left-1/2 -translate-x-1/2 w-full max-w-5xl h-72 bg-gradient-to-b from-indigo-950/20 via-slate-900/10 to-transparent blur-3xl pointer-events-none -z-10" />
 
       {/* Header Branding - Centered with Minimalist Clear Logo (English Only) */}
-      <div className="w-full max-w-5xl px-4 relative flex items-center justify-center mb-6">
-        {/* Centered MMD FILM Branding */}
-        <div className="flex flex-col items-center justify-center text-center">
+      <div className="w-full max-w-5xl px-4 relative z-10 flex items-center justify-center mb-6">
+        {/* Centered MMD FILM Branding (Click to Return Home) */}
+        <button
+          type="button"
+          onClick={onClearSearch}
+          className="flex flex-col items-center justify-center text-center cursor-pointer group focus:outline-none"
+          title="بازگشت به صفحه اول"
+        >
           <div className="flex items-center gap-3">
             {/* Minimalist, Clear & High-Contrast Logo */}
-            <div className="relative w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-br from-zinc-900 via-zinc-950 to-black border border-white/15 flex items-center justify-center shadow-[0_0_24px_rgba(255,255,255,0.06)] ring-1 ring-white/10 group transition-transform hover:scale-105">
+            <div className="relative w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-br from-zinc-900 via-zinc-950 to-black border border-white/15 flex items-center justify-center shadow-[0_0_24px_rgba(255,255,255,0.06)] ring-1 ring-white/10 group-hover:scale-105 transition-transform">
               <div className="absolute inset-0 rounded-2xl bg-radial from-indigo-500/10 via-transparent to-transparent pointer-events-none" />
               <svg
                 viewBox="0 0 36 36"
@@ -290,11 +295,11 @@ export const HeroSearch: React.FC<HeroSearchProps> = ({
               </h1>
             </div>
           </div>
-        </div>
+        </button>
       </div>
 
       {/* Central Frosted Glass Search Capsule & Dropdown */}
-      <div ref={containerRef} className="w-full max-w-3xl px-4 relative z-40">
+      <div ref={containerRef} className="w-full max-w-3xl px-4 relative z-20">
         {/* Floating Capsule Bar with Ultra-Clean Frosted Glass Look */}
         <div
           className={`relative rounded-3xl transition-all duration-300 shadow-2xl ${

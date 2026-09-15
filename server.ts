@@ -400,7 +400,7 @@ app.get('/api/tmdb/trending-series', async (req: Request, res: Response) => {
 app.get('/api/tmdb/discover', async (req: Request, res: Response) => {
   const genresParam = (req.query.with_genres as string || '').trim();
   const yearsParam = (req.query.years as string || req.query.year as string || '').trim();
-  const type = (req.query.type as string || 'movie').trim();
+  const rawType = (req.query.type as string || 'all').trim().toLowerCase();
   const sortBy = (req.query.sort_by as string || 'popularity.desc').trim();
   const minRating = Number(req.query.vote_average_gte || 0);
 
@@ -411,62 +411,104 @@ app.get('/api/tmdb/discover', async (req: Request, res: Response) => {
   const genreIds = genresParam ? genresParam.split(',').map(g => Number(g.trim())).filter(Boolean) : [];
   const selectedYears = yearsParam ? yearsParam.split(',').map(y => y.trim()).filter(Boolean) : [];
 
+  // Map genre IDs for TV if needed (e.g. 28 action -> 10759, 878 sci-fi -> 10765)
+  const tvGenreIds = genreIds.map(gid => {
+    if (gid === 28 || gid === 12) return 10759; // Action & Adventure for TV
+    if (gid === 878 || gid === 14) return 10765; // Sci-Fi & Fantasy for TV
+    return gid;
+  });
+
+  const endpointsToFetch: { endpoint: 'discover/movie' | 'discover/tv'; type: 'movie' | 'tv'; page: number }[] = [];
+
+  if (rawType === 'movie') {
+    // 5 pages = 100 movies
+    for (let p = 1; p <= 5; p++) {
+      endpointsToFetch.push({ endpoint: 'discover/movie', type: 'movie', page: p });
+    }
+  } else if (rawType === 'tv') {
+    // 5 pages = 100 tv series / anime
+    for (let p = 1; p <= 5; p++) {
+      endpointsToFetch.push({ endpoint: 'discover/tv', type: 'tv', page: p });
+    }
+  } else {
+    // 'all': 3 pages movies + 3 pages tv series = 120 total live titles!
+    for (let p = 1; p <= 3; p++) {
+      endpointsToFetch.push({ endpoint: 'discover/movie', type: 'movie', page: p });
+      endpointsToFetch.push({ endpoint: 'discover/tv', type: 'tv', page: p });
+    }
+  }
+
   let liveResults: any[] = [];
 
-  // Attempt live TMDB Discover with proxy
   try {
-    const endpoint = type === 'tv' ? 'discover/tv' : 'discover/movie';
-    let url = `https://api.themoviedb.org/3/${endpoint}?api_key=${apiKey}&sort_by=${sortBy}&include_adult=false&page=1`;
-    if (genresParam) {
-      // Multiple genres separated by comma or pipe (OR / AND logic)
-      url += `&with_genres=${encodeURIComponent(genresParam)}`;
-    }
-    if (selectedYears.length === 1) {
-      if (type === 'tv') {
-        url += `&first_air_date_year=${selectedYears[0]}`;
-      } else {
-        url += `&primary_release_year=${selectedYears[0]}`;
-      }
-    }
-    if (minRating > 0) {
-      url += `&vote_average.gte=${minRating}`;
-    }
+    const fetchPromises = endpointsToFetch.map(async ({ endpoint, type, page }) => {
+      let url = `https://api.themoviedb.org/3/${endpoint}?api_key=${apiKey}&sort_by=${sortBy}&include_adult=false&page=${page}`;
+      
+      const gParam = type === 'tv' && tvGenreIds.length > 0 
+        ? tvGenreIds.join(',') 
+        : genresParam;
 
-    const tmdbRes = await fetch(url, {
-      headers: { 'Accept': 'application/json' },
-      signal: AbortSignal.timeout(4500)
+      if (gParam) {
+        url += `&with_genres=${encodeURIComponent(gParam)}`;
+      }
+      if (selectedYears.length === 1) {
+        if (type === 'tv') {
+          url += `&first_air_date_year=${selectedYears[0]}`;
+        } else {
+          url += `&primary_release_year=${selectedYears[0]}`;
+        }
+      }
+      if (minRating > 0) {
+        url += `&vote_average.gte=${minRating}`;
+      }
+
+      const tmdbRes = await fetch(url, {
+        headers: { 'Accept': 'application/json' },
+        signal: AbortSignal.timeout(4500)
+      });
+
+      if (!tmdbRes.ok) return [];
+
+      const data = await tmdbRes.json();
+      if (!Array.isArray(data.results)) return [];
+
+      return data.results.map((m: any) => {
+        const title = m.title || m.name || m.original_title || m.original_name;
+        const localMatch = CATALOG.find(c => c.tmdbId === m.id || c.title.toLowerCase() === title?.toLowerCase());
+        const mappedGenres = (m.genre_ids || []).map((gid: number) => TMDB_GENRE_MAP[gid]).filter(Boolean);
+        const relYear = (m.release_date || m.first_air_date || '2024').split('-')[0];
+
+        return {
+          id: localMatch ? localMatch.id : `${type}-${m.id}`,
+          tmdbId: m.id,
+          title,
+          titleFa: localMatch ? localMatch.titleFa : title,
+          type,
+          overview: m.overview || '',
+          overviewFa: localMatch ? localMatch.overviewFa : m.overview,
+          posterUrl: m.poster_path 
+            ? `https://image.tmdb.org/t/p/w500${m.poster_path}` 
+            : (localMatch?.posterUrl || ''),
+          backdropUrl: m.backdrop_path 
+            ? `https://image.tmdb.org/t/p/w1280${m.backdrop_path}` 
+            : (localMatch?.backdropUrl || ''),
+          rating: Number((m.vote_average || 7.0).toFixed(1)),
+          releaseYear: relYear,
+          genres: localMatch?.genres || (mappedGenres.length > 0 ? mappedGenres : [type === 'tv' ? 'سریال' : 'فیلم سینمایی']),
+          genreIds: m.genre_ids || [],
+          quality: localMatch ? localMatch.quality : '1080p Web-DL',
+          hasDubbed: localMatch ? localMatch.hasDubbed : true,
+          hasSubbed: true,
+        };
+      });
     });
 
-    if (tmdbRes.ok) {
-      const data = await tmdbRes.json();
-      if (Array.isArray(data.results) && data.results.length > 0) {
-        liveResults = data.results.map((m: any) => {
-          const title = m.title || m.name || m.original_title || m.original_name;
-          const localMatch = CATALOG.find(c => c.tmdbId === m.id || c.title.toLowerCase() === title?.toLowerCase());
-          const mappedGenres = (m.genre_ids || []).map((gid: number) => TMDB_GENRE_MAP[gid]).filter(Boolean);
-          const relYear = (m.release_date || m.first_air_date || '2024').split('-')[0];
-
-          return {
-            id: localMatch ? localMatch.id : `${type}-${m.id}`,
-            tmdbId: m.id,
-            title,
-            titleFa: localMatch ? localMatch.titleFa : title,
-            type: type === 'tv' ? 'tv' : 'movie',
-            overview: m.overview || '',
-            overviewFa: localMatch ? localMatch.overviewFa : m.overview,
-            posterUrl: m.poster_path ? `https://image.tmdb.org/t/p/w600_and_h900_bestv2${m.poster_path}` : (localMatch?.posterUrl || ''),
-            backdropUrl: m.backdrop_path ? `https://image.tmdb.org/t/p/original${m.backdrop_path}` : (localMatch?.backdropUrl || ''),
-            rating: Number((m.vote_average || 7.0).toFixed(1)),
-            releaseYear: relYear,
-            genres: localMatch?.genres || (mappedGenres.length > 0 ? mappedGenres : ['فیلم سینمایی']),
-            genreIds: m.genre_ids || [],
-            quality: localMatch ? localMatch.quality : '1080p Web-DL',
-            hasDubbed: localMatch ? localMatch.hasDubbed : true,
-            hasSubbed: true,
-          };
-        });
+    const settled = await Promise.allSettled(fetchPromises);
+    settled.forEach((res) => {
+      if (res.status === 'fulfilled' && Array.isArray(res.value)) {
+        liveResults.push(...res.value);
       }
-    }
+    });
   } catch (err) {
     console.warn('TMDB Discover live fetch error:', err);
   }
@@ -479,7 +521,7 @@ app.get('/api/tmdb/discover', async (req: Request, res: Response) => {
   // Filter local catalog and curated horror catalog to guarantee abundant results
   const allCatalogPool = [...CATALOG, ...HORROR_MEDIA_CATALOG];
   const localMatches = allCatalogPool.filter(item => {
-    if (type !== 'all' && item.type !== type) return false;
+    if (rawType !== 'all' && item.type !== rawType) return false;
     if (minRating > 0 && item.rating < minRating) return false;
 
     // Check year filter
@@ -563,6 +605,7 @@ interface AparatSeasonItem {
 }
 
 interface AparatSeriesItem {
+  available?: boolean;
   isSeries: boolean;
   totalSeasons: number;
   totalEpisodes: number;
@@ -699,10 +742,17 @@ function isTitleStrictlyRelevant(videoTitle: string, targetFa: string, targetEn:
     const enTokens = normEn.split(' ').filter(w => w.length >= 3 && !stopWords.has(w));
 
     // If key Persian words match (e.g. "تل" and "ماسه", or "ددپول", or "جوکر")
-    if (faTokens.length > 0 && faTokens.every(token => normTitle.includes(token))) {
-      isMatch = true;
-    } else if (enTokens.length > 0 && enTokens.every(token => normTitle.includes(token))) {
-      isMatch = true;
+    if (faTokens.length > 0) {
+      const matchCount = faTokens.filter(token => normTitle.includes(token)).length;
+      if (matchCount >= Math.ceil(faTokens.length / 2)) {
+        isMatch = true;
+      }
+    }
+    if (!isMatch && enTokens.length > 0) {
+      const matchCount = enTokens.filter(token => normTitle.includes(token)).length;
+      if (matchCount >= Math.ceil(enTokens.length / 2)) {
+        isMatch = true;
+      }
     }
   }
 
@@ -718,7 +768,11 @@ function isTitleStrictlyRelevant(videoTitle: string, targetFa: string, targetEn:
   for (const os of otherSeries) {
     const normOs = normalizeSearchText(os);
     if (normTitle.includes(normOs) && !normFa.includes(normOs) && !normEn.includes(normOs)) {
-      return false;
+      // Only reject if it does not share the main root word of targetFa
+      const targetFirstWord = normFa.split(' ')[0];
+      if (!targetFirstWord || !normOs.includes(targetFirstWord)) {
+        return false;
+      }
     }
   }
 
@@ -1052,7 +1106,13 @@ async function searchAparatSeries(titleFa: string, titleEn: string): Promise<Apa
     if (!q || q.trim().length < 2) continue;
     try {
       const searchUrl = `https://www.aparat.com/api/fa/v1/video/video/search/text/${encodeURIComponent(q)}`;
-      const res = await fetch(searchUrl, { signal: AbortSignal.timeout(3500) });
+      const res = await fetch(searchUrl, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+          'Referer': 'https://www.aparat.com/'
+        },
+        signal: AbortSignal.timeout(3500)
+      });
       if (!res.ok) continue;
       const data = await res.json();
       const videos = data?.included?.filter((item: any) => item.type === 'Video') || [];
@@ -1134,26 +1194,29 @@ async function searchAparatSingleMovie(
   const cleanFa = (titleFa || cleanEn).replace(/[0-9]{4}/g, '').trim();
 
   let searchQueries: string[] = [];
+  const hasDub = cleanFa.includes('دوبله') || cleanFa.includes('dubbed');
+  const hasSub = cleanFa.includes('زیرنویس') || cleanFa.includes('sub');
+
   if (variant === 'dubbed') {
     searchQueries = [
-      `${cleanFa} فیلم کامل دوبله`,
-      `${cleanFa} دوبله فارسی کامل`,
-      `${cleanFa} دوبله فارسی`,
+      hasDub ? cleanFa : `${cleanFa} دوبله فارسی`,
+      `${cleanFa} فیلم کامل`,
       cleanEn ? `${cleanEn} دوبله فارسی` : '',
+      cleanFa,
     ].filter(Boolean);
   } else if (variant === 'subbed') {
     searchQueries = [
-      `${cleanFa} فیلم کامل زیرنویس فارسی`,
-      `${cleanFa} زیرنویس چسبیده`,
-      `${cleanFa} با زیرنویس`,
+      hasSub ? cleanFa : `${cleanFa} زیرنویس فارسی`,
+      `${cleanFa} فیلم کامل زیرنویس`,
       cleanEn ? `${cleanEn} زیرنویس فارسی` : '',
+      cleanFa,
     ].filter(Boolean);
   } else {
     searchQueries = [
+      cleanFa,
       `${cleanFa} فیلم کامل`,
       `${cleanFa} دوبله`,
       cleanEn ? `${cleanEn} full movie` : '',
-      cleanFa,
     ].filter(Boolean);
   }
 
@@ -1161,17 +1224,23 @@ async function searchAparatSingleMovie(
     if (!q || q.trim().length < 2) continue;
     try {
       const searchUrl = `https://www.aparat.com/api/fa/v1/video/video/search/text/${encodeURIComponent(q)}`;
-      const res = await fetch(searchUrl, { signal: AbortSignal.timeout(3500) });
+      const res = await fetch(searchUrl, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+          'Referer': 'https://www.aparat.com/'
+        },
+        signal: AbortSignal.timeout(3500)
+      });
       if (!res.ok) continue;
       const data = await res.json();
       const videos = data?.included?.filter((item: any) => item.type === 'Video') || [];
 
-      for (const v of videos.slice(0, 10)) {
+      for (const v of videos.slice(0, 8)) {
         const title = v.attributes?.title || '';
         const dur = parseInt(v.attributes?.duration) || 0;
 
-        // Check if duration is at least 35 minutes (2100 seconds) - genuine full film
-        if (dur >= 2100 && v.attributes?.uid) {
+        // Check if duration is at least 20 minutes (1200 seconds)
+        if (dur >= 1200 && v.attributes?.uid) {
           if (!isTitleStrictlyRelevant(title, cleanFa, cleanEn)) continue;
 
           const isDub = detectIsDubbed(title);
@@ -1182,42 +1251,68 @@ async function searchAparatSingleMovie(
 
           try {
             const detailRes = await fetch(
-              `https://www.aparat.com/api/fa/v1/video/video/show/videohash/${v.attributes.uid}`,
-              { signal: AbortSignal.timeout(3000) }
+              `https://www.aparat.com/api/fa/v1/video/video/show/videohash/${v.attributes.uid}/watchtype/embed?pr=1&mf=1&referer=embed`,
+              {
+                headers: {
+                  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+                  'Jsontype': 'simple',
+                  'Referer': 'https://www.aparat.com/'
+                },
+                signal: AbortSignal.timeout(3500)
+              }
             );
             if (detailRes.ok) {
               const detail = await detailRes.json();
-              const attr = detail?.data?.attributes;
-              if (attr && attr.file_link_all && Array.isArray(attr.file_link_all) && attr.file_link_all.length > 0) {
-                const qualities: AparatQualityItem[] = attr.file_link_all
-                  .filter((f: any) => f.urls && f.urls[0])
-                  .map((f: any) => ({
-                    text: f.text || `کیفیت ${f.profile || 'استاندارد'}`,
-                    size: f.size || '',
-                    profile: f.profile || '720p',
-                    url: f.urls[0],
-                  }))
-                  .reverse(); // Highest quality first
+              const item = Array.isArray(detail?.data) ? detail.data[0] : detail?.data;
+              const rawObj = item?.attributes || item || {};
+              if (rawObj) {
+                const fileLinkAll = rawObj.file_link_all;
+                let qualities: AparatQualityItem[] = [];
+                if (Array.isArray(fileLinkAll) && fileLinkAll.length > 0) {
+                  qualities = fileLinkAll
+                    .filter((f: any) => f.urls && f.urls[0])
+                    .map((f: any) => ({
+                      text: f.text || `کیفیت ${f.profile || 'استاندارد'}`,
+                      size: f.size || '',
+                      profile: f.profile || '720p',
+                      url: f.urls[0],
+                    }))
+                    .reverse(); // Highest quality first
+                } else if (rawObj.file_link) {
+                  qualities = [{
+                    text: 'کیفیت اصلی (HD)',
+                    size: '',
+                    profile: 'HD',
+                    url: rawObj.file_link,
+                  }];
+                } else if (rawObj.hls_link || v.attributes?.hls_link) {
+                  qualities = [{
+                    text: 'پخش مستقیم (HLS)',
+                    size: '',
+                    profile: 'HLS',
+                    url: rawObj.hls_link || v.attributes?.hls_link,
+                  }];
+                }
 
-                const highestUrl = qualities[0]?.url || attr.file_link || '';
-                const hlsUrl = attr.hls_link || '';
+                const highestUrl = qualities[0]?.url || rawObj.file_link || '';
+                const hlsUrl = rawObj.hls_link || v.attributes?.hls_link || '';
                 const streamTarget = highestUrl || hlsUrl;
                 const maxQualityScore = parseQualityRank(qualities);
 
                 return {
                   available: true,
-                  title: attr.title || v.attributes.title || titleFa,
+                  title: rawObj.title || v.attributes?.title || titleFa,
                   uid: v.attributes.uid,
                   pageUrl: `https://www.aparat.com/v/${v.attributes.uid}`,
                   embedUrl: `https://www.aparat.com/video/video/embed/videohash/${v.attributes.uid}/vt/frame`,
                   durationFormatted: `${Math.round(dur / 60)} دقیقه`,
                   durationSec: dur,
-                  poster: attr.big_poster || attr.medium_poster || v.attributes.big_poster,
+                  poster: rawObj.big_poster || rawObj.medium_poster || v.attributes?.big_poster,
                   provider: 'Aparat',
                   providerNameFa: 'آپارات',
                   qualities,
                   hlsStreamUrl: hlsUrl,
-                  senderName: attr.sender_name || 'کانال ویدیویی در آپارات',
+                  senderName: rawObj.sender_name || v.attributes?.sender_name || 'کانال ویدیویی در آپارات',
                   vlcUrl: streamTarget ? `vlc://${streamTarget}` : undefined,
                   potPlayerUrl: streamTarget ? `potplayer://${streamTarget}` : undefined,
                   mxPlayerUrl: streamTarget ? `intent:${streamTarget}#Intent;package=com.mxtech.videoplayer.ad;type=video/*;end` : undefined,
@@ -1331,7 +1426,8 @@ app.get('/api/movie-details', async (req: Request, res: Response) => {
     const rawTmdbId = Number(req.query.tmdbId) || 0;
     const rawTitle = (req.query.title as string || '').trim();
     const rawTitleFa = (req.query.titleFa as string || '').trim();
-    const rawType = (req.query.type as string || 'movie').toLowerCase() === 'tv' ? 'tv' : 'movie';
+    const rawTypeParam = (req.query.type as string || 'movie').toLowerCase();
+    const rawType = (rawTypeParam === 'tv' || rawTypeParam === 'series') ? 'tv' : 'movie';
     const sourceUrl = (req.query.sourceUrl as string || '').trim();
     const sourceSite = (req.query.sourceSite as string || '').trim();
 
@@ -1359,7 +1455,9 @@ app.get('/api/movie-details', async (req: Request, res: Response) => {
     let imdbId = '';
     let trailers: { name: string; key?: string; url?: string; site?: string; type?: string; embedUrl?: string; isIranAccessible?: boolean }[] = [];
 
-    const apiKey = process.env.TMDB_API_KEY;
+    const apiKey = (process.env.TMDB_API_KEY && process.env.TMDB_API_KEY !== 'YOUR_TMDB_API_KEY')
+      ? process.env.TMDB_API_KEY
+      : 'b0c22421f649bb77ecbfca44c207d727';
 
     // 2. If tmdbId is missing but we have title, search TMDB
     if (!tmdbId && apiKey && title) {
@@ -1373,10 +1471,10 @@ app.get('/api/movie-details', async (req: Request, res: Response) => {
             if (!title) title = sData.results[0].title || sData.results[0].name;
             if (!overview) overview = sData.results[0].overview;
             if (!posterUrl && sData.results[0].poster_path) {
-              posterUrl = `https://image.tmdb.org/t/p/w600_and_h900_bestv2${sData.results[0].poster_path}`;
+              posterUrl = `https://image.tmdb.org/t/p/w500${sData.results[0].poster_path}`;
             }
             if (!backdropUrl && sData.results[0].backdrop_path) {
-              backdropUrl = `https://image.tmdb.org/t/p/original${sData.results[0].backdrop_path}`;
+              backdropUrl = `https://image.tmdb.org/t/p/w1280${sData.results[0].backdrop_path}`;
             }
             if (sData.results[0].vote_average) {
               rating = Number(sData.results[0].vote_average.toFixed(1));
@@ -1395,15 +1493,18 @@ app.get('/api/movie-details', async (req: Request, res: Response) => {
     // 3. If we have tmdbId, fetch full details, videos & credits
     if (tmdbId && apiKey) {
       try {
-        const detailRes = await fetch(`https://api.themoviedb.org/3/${rawType}/${tmdbId}?api_key=${apiKey}&append_to_response=videos,credits&language=en-US`);
+        const detailRes = await fetch(`https://api.themoviedb.org/3/${rawType}/${tmdbId}?api_key=${apiKey}&append_to_response=videos,credits,aggregate_credits,external_ids&language=en-US`);
         if (detailRes.ok) {
           const d = await detailRes.json();
           if (!title) title = d.title || d.name;
           if (!overview) overview = d.overview;
-          if (!posterUrl && d.poster_path) posterUrl = `https://image.tmdb.org/t/p/w600_and_h900_bestv2${d.poster_path}`;
-          if (!backdropUrl && d.backdrop_path) backdropUrl = `https://image.tmdb.org/t/p/original${d.backdrop_path}`;
+          if (!posterUrl && d.poster_path) posterUrl = `https://image.tmdb.org/t/p/w500${d.poster_path}`;
+          if (!backdropUrl && d.backdrop_path) backdropUrl = `https://image.tmdb.org/t/p/w1280${d.backdrop_path}`;
           if (d.vote_average) rating = Number(d.vote_average.toFixed(1));
           if (d.runtime) runtime = `${d.runtime} دقیقه`;
+          else if (d.episode_run_time && d.episode_run_time.length > 0) runtime = `${d.episode_run_time[0]} دقیقه`;
+          else if (rawType === 'tv') runtime = `${d.number_of_seasons || 1} فصل`;
+
           if (d.genres && d.genres.length > 0 && (!localMatch || genres.length === 0)) {
             const genreMap: Record<string, string> = {
               'Action': 'اکشن',
@@ -1425,18 +1526,33 @@ app.get('/api/movie-details', async (req: Request, res: Response) => {
               'Thriller': 'هیجان انگیز',
               'War': 'جنگی',
               'Western': 'وسترن',
+              'Action & Adventure': 'اکشن و ماجراجویی',
+              'Sci-Fi & Fantasy': 'علمی تخیلی و فانتزی',
+              'War & Politics': 'جنگی و سیاسی',
             };
             genres = d.genres.map((g: any) => genreMap[g.name] || g.name);
           }
-          imdbId = d.imdb_id || '';
+          imdbId = d.imdb_id || d.external_ids?.imdb_id || '';
 
-          // Director & Cast
-          if (d.credits?.crew) {
-            const dir = d.credits.crew.find((c: any) => c.job === 'Director');
-            if (dir) director = dir.name;
+          // Director & Creator
+          if (rawType === 'tv') {
+            if (Array.isArray(d.created_by) && d.created_by.length > 0) {
+              director = d.created_by.map((c: any) => c.name).join('، ');
+            } else if (d.credits?.crew) {
+              const tvDir = d.credits.crew.find((c: any) => c.job === 'Director' || c.job === 'Executive Producer');
+              if (tvDir) director = tvDir.name;
+            }
+          } else {
+            if (d.credits?.crew) {
+              const dir = d.credits.crew.find((c: any) => c.job === 'Director');
+              if (dir) director = dir.name;
+            }
           }
-          if (d.credits?.cast) {
-            cast = d.credits.cast.slice(0, 8).map((c: any) => c.name);
+
+          // Full Cast from TMDB
+          const rawCast = d.credits?.cast || d.aggregate_credits?.cast || [];
+          if (Array.isArray(rawCast) && rawCast.length > 0) {
+            cast = rawCast.slice(0, 10).map((c: any) => c.name).filter(Boolean);
           }
 
           // YouTube Official Trailers
@@ -1548,7 +1664,13 @@ app.get('/api/movie-details', async (req: Request, res: Response) => {
     try {
       const cleanQ = cleanFa.replace(/[0-9]{4}|قسمت|فصل|دوبله|زیرنویس/gi, '').trim();
       const aparatUrl = `https://www.aparat.com/api/fa/v1/video/video/search/text/${encodeURIComponent(cleanQ + ' تریلر')}`;
-      const aparatRes = await fetch(aparatUrl, { signal: AbortSignal.timeout(3500) });
+      const aparatRes = await fetch(aparatUrl, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+          'Referer': 'https://www.aparat.com/'
+        },
+        signal: AbortSignal.timeout(3500)
+      });
       if (aparatRes.ok) {
         const aData = await aparatRes.json();
         const video = aData?.included?.find((item: any) => item.type === 'Video' && item.attributes?.frame);
@@ -1565,7 +1687,13 @@ app.get('/api/movie-details', async (req: Request, res: Response) => {
     if (!aparatEmbedUrl && cleanEn) {
       try {
         const aparatUrlEn = `https://www.aparat.com/api/fa/v1/video/video/search/text/${encodeURIComponent(cleanEn + ' trailer')}`;
-        const aparatResEn = await fetch(aparatUrlEn, { signal: AbortSignal.timeout(3000) });
+        const aparatResEn = await fetch(aparatUrlEn, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+            'Referer': 'https://www.aparat.com/'
+          },
+          signal: AbortSignal.timeout(3000)
+        });
         if (aparatResEn.ok) {
           const aDataEn = await aparatResEn.json();
           const videoEn = aDataEn?.included?.find((item: any) => item.type === 'Video' && item.attributes?.frame);
@@ -1643,6 +1771,12 @@ app.get('/api/movie-details', async (req: Request, res: Response) => {
       } catch (apFullErr) {
         console.warn('Movie full search failed:', apFullErr);
       }
+    } else if (rawType === 'tv') {
+      try {
+        aparatSeries = await searchAparatSeries(cleanFa, cleanEn);
+      } catch (apSeriesErr) {
+        console.warn('Series full search failed:', apSeriesErr);
+      }
     }
 
     res.json({
@@ -1678,6 +1812,63 @@ app.get('/api/movie-details', async (req: Request, res: Response) => {
   } catch (error: any) {
     console.error('Error in /api/movie-details:', error);
     res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+/**
+ * GET /api/image-proxy?url=...
+ * Proxies and aggressively caches external poster and backdrop images (TMDB, IMDb, Aparat)
+ * to prevent broken image cards caused by ISP CDN blocks or CORS restrictions.
+ */
+app.get('/api/image-proxy', async (req: Request, res: Response) => {
+  const imageUrl = (req.query.url as string || '').trim();
+  if (!imageUrl) {
+    return res.status(400).send('Missing url parameter');
+  }
+
+  try {
+    const parsed = new URL(imageUrl);
+    const allowedHosts = [
+      'image.tmdb.org',
+      'themoviedb.org',
+      'static.cdn.asset.aparat.com',
+      'm.media-amazon.com',
+      'images.unsplash.com',
+      'film2media.ir',
+      'film2serial.ir',
+      'avamovie.com',
+      'uploadb.me',
+    ];
+
+    const isAllowedHost = allowedHosts.some(h => parsed.hostname.endsWith(h));
+    const isImageExt = /\.(jpg|jpeg|png|webp|gif|svg)(\?.*)?$/i.test(parsed.pathname);
+
+    if (!isAllowedHost && !isImageExt && !parsed.hostname.includes('tmdb') && !parsed.hostname.includes('aparat')) {
+      return res.status(403).send('Forbidden image host');
+    }
+
+    const imgRes = await fetch(imageUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+        'Referer': 'https://www.themoviedb.org/',
+      },
+      signal: AbortSignal.timeout(6500),
+    });
+
+    if (!imgRes.ok) {
+      return res.status(imgRes.status).send('Upstream image error');
+    }
+
+    const contentType = imgRes.headers.get('content-type') || 'image/jpeg';
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Cache-Control', 'public, max-age=604800, immutable'); // Cache 7 days in browser/proxy
+
+    const arrayBuffer = await imgRes.arrayBuffer();
+    return res.send(Buffer.from(arrayBuffer));
+  } catch (err: any) {
+    console.warn('Image proxy error for', imageUrl, err.message);
+    return res.status(502).send('Failed to fetch image');
   }
 });
 
@@ -1769,9 +1960,17 @@ app.get('/api/aparat/episode-links', async (req: Request, res: Response) => {
     }
 
     // 2. Handle Aparat episodes
-    const detailRes = await fetch(`https://www.aparat.com/api/fa/v1/video/video/show/videohash/${uid}`, {
-      signal: AbortSignal.timeout(4000)
-    });
+    const detailRes = await fetch(
+      `https://www.aparat.com/api/fa/v1/video/video/show/videohash/${uid}/watchtype/embed?pr=1&mf=1&referer=embed`,
+      {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+          'Jsontype': 'simple',
+          'Referer': 'https://www.aparat.com/'
+        },
+        signal: AbortSignal.timeout(4000)
+      }
+    );
 
     if (!detailRes.ok) {
       return res.json({
@@ -1788,21 +1987,39 @@ app.get('/api/aparat/episode-links', async (req: Request, res: Response) => {
     }
 
     const detailData = await detailRes.json();
-    const rawData = Array.isArray(detailData.data) ? detailData.data[0] : detailData.data;
-    const attr = rawData?.attributes;
+    const item = Array.isArray(detailData.data) ? detailData.data[0] : detailData?.data;
+    const rawData = item?.attributes || item || {};
+    const fileLinkAll = rawData?.file_link_all;
 
-    const qualities = (attr?.file_link_all || [])
-      .filter((f: any) => f.urls && f.urls[0])
-      .map((f: any) => ({
-        text: f.text || `کیفیت ${f.profile || 'استاندارد'}`,
-        size: f.size || '',
-        profile: f.profile || '720p',
-        url: f.urls[0],
-      }))
-      .reverse();
+    let qualities: AparatQualityItem[] = [];
+    if (Array.isArray(fileLinkAll) && fileLinkAll.length > 0) {
+      qualities = fileLinkAll
+        .filter((f: any) => f.urls && f.urls[0])
+        .map((f: any) => ({
+          text: f.text || `کیفیت ${f.profile || 'استاندارد'}`,
+          size: f.size || '',
+          profile: f.profile || '720p',
+          url: f.urls[0],
+        }))
+        .reverse();
+    } else if (rawData?.file_link) {
+      qualities = [{
+        text: 'کیفیت اصلی (HD)',
+        size: '',
+        profile: 'HD',
+        url: rawData.file_link,
+      }];
+    } else if (rawData?.hls_link) {
+      qualities = [{
+        text: 'پخش زنده (HLS)',
+        size: '',
+        profile: 'HLS',
+        url: rawData.hls_link,
+      }];
+    }
 
-    const highestUrl = qualities[0]?.url || attr?.file_link || '';
-    const hlsUrl = attr?.hls_link || '';
+    const highestUrl = qualities[0]?.url || rawData?.file_link || '';
+    const hlsUrl = rawData?.hls_link || '';
     const streamTarget = highestUrl || hlsUrl;
 
     res.json({
@@ -1811,10 +2028,10 @@ app.get('/api/aparat/episode-links', async (req: Request, res: Response) => {
         uid,
         provider: 'Aparat',
         providerNameFa: 'آپارات',
-        title: attr?.title || '',
+        title: rawData?.title || '',
         pageUrl: `https://www.aparat.com/v/${uid}`,
         embedUrl: `https://www.aparat.com/video/video/embed/videohash/${uid}/vt/frame`,
-        durationFormatted: attr?.duration ? `${Math.round(attr.duration / 60)} دقیقه` : '',
+        durationFormatted: rawData?.duration ? `${Math.round(rawData.duration / 60)} دقیقه` : '',
         qualities,
         hlsStreamUrl: hlsUrl,
         vlcUrl: streamTarget ? `vlc://${streamTarget}` : undefined,
@@ -1823,6 +2040,225 @@ app.get('/api/aparat/episode-links', async (req: Request, res: Response) => {
       }
     });
   } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * GET /api/aparat-search?q=...
+ * Direct user search query across Iranian servers (Aparat & Namasha) for movies and series
+ */
+app.get('/api/aparat-search', async (req: Request, res: Response) => {
+  try {
+    const q = ((req.query.q as string) || '').trim();
+    if (!q) {
+      return res.json({ success: false, error: 'Query is required' });
+    }
+
+    const isSeriesQuery = /سریال|فصل|قسمت|season|episode|series/i.test(q);
+
+    // 1. Run direct Aparat search & movie/series search in parallel
+    const [directVideos, movieResult, seriesResult] = await Promise.all([
+      // Direct search on Aparat API for exact query
+      (async () => {
+        try {
+          const searchUrl = `https://www.aparat.com/api/fa/v1/video/video/search/text/${encodeURIComponent(q)}`;
+          const sRes = await fetch(searchUrl, {
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+              'Referer': 'https://www.aparat.com/'
+            },
+            signal: AbortSignal.timeout(4000)
+          });
+          if (!sRes.ok) return [];
+          const data = await sRes.json();
+          const rawVideos = data?.included?.filter((x: any) => x.type === 'Video') || [];
+          return rawVideos;
+        } catch {
+          return [];
+        }
+      })(),
+      // Standard movie search (with dubbed/subbed variants)
+      searchBestFullMovie(q, q).catch(() => null),
+      // Series search if query suggests series
+      isSeriesQuery ? searchAparatSeries(q, q).catch(() => null) : Promise.resolve(null),
+    ]);
+
+    // Format alternate/top video results from Aparat
+    const alternateResults = directVideos
+      .slice(0, 15)
+      .map((v: any) => {
+        const dur = parseInt(v.attributes?.duration) || 0;
+        return {
+          uid: v.attributes?.uid || '',
+          title: v.attributes?.title || '',
+          durationFormatted: dur > 0 ? `${Math.round(dur / 60)} دقیقه` : '',
+          durationSec: dur,
+          poster: v.attributes?.big_poster || v.attributes?.medium_poster || v.attributes?.small_poster || '',
+          embedUrl: `https://www.aparat.com/video/video/embed/videohash/${v.attributes?.uid}/vt/frame`,
+          pageUrl: `https://www.aparat.com/v/${v.attributes?.uid}`,
+          senderName: v.attributes?.sender_name || 'آپارات',
+        };
+      })
+      .filter((v: any) => !!v.uid);
+
+    // If a full structured movie was found by searchBestFullMovie
+    if (movieResult && movieResult.available) {
+      return res.json({
+        success: true,
+        data: movieResult,
+        seriesData: seriesResult || undefined,
+        alternateResults,
+      });
+    }
+
+    // If seriesResult was found
+    if (seriesResult && seriesResult.available) {
+      return res.json({
+        success: true,
+        data: {
+          available: true,
+          title: q,
+          isSeries: true,
+          provider: 'Aparat/Namasha',
+          providerNameFa: 'سرورهای داخلی',
+        },
+        seriesData: seriesResult,
+        alternateResults,
+      });
+    }
+
+    // If no movieResult yet, but direct Aparat search returned videos:
+    // Extract full details and qualities for the best candidate (longest duration not blacklisted)
+    if (directVideos.length > 0) {
+      const candidates = directVideos.filter((v: any) => {
+        const title = v.attributes?.title || '';
+        return !BLACKLIST_KEYWORDS.some(b => title.includes(b));
+      });
+      const pool = candidates.length > 0 ? candidates : directVideos;
+      const sorted = [...pool].sort((a: any, b: any) => {
+        return (parseInt(b.attributes?.duration) || 0) - (parseInt(a.attributes?.duration) || 0);
+      });
+
+      const best = sorted[0];
+      if (best?.attributes?.uid) {
+        try {
+          const detailRes = await fetch(
+            `https://www.aparat.com/api/fa/v1/video/video/show/videohash/${best.attributes.uid}/watchtype/embed?pr=1&mf=1&referer=embed`,
+            {
+              headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+                'Jsontype': 'simple',
+                'Referer': 'https://www.aparat.com/'
+              },
+              signal: AbortSignal.timeout(4000)
+            }
+          );
+
+          if (detailRes.ok) {
+            const detail = await detailRes.json();
+            const item = Array.isArray(detail?.data) ? detail.data[0] : detail?.data;
+            const rawObj = item?.attributes || item || {};
+
+            const fileLinkAll = rawObj.file_link_all;
+            let qualities: AparatQualityItem[] = [];
+            if (Array.isArray(fileLinkAll) && fileLinkAll.length > 0) {
+              qualities = fileLinkAll
+                .filter((f: any) => f.urls && f.urls[0])
+                .map((f: any) => ({
+                  text: f.text || `کیفیت ${f.profile || 'استاندارد'}`,
+                  size: f.size || '',
+                  profile: f.profile || '720p',
+                  url: f.urls[0],
+                }))
+                .reverse();
+            } else if (rawObj.file_link) {
+              qualities = [{
+                text: 'کیفیت اصلی (HD)',
+                size: '',
+                profile: 'HD',
+                url: rawObj.file_link,
+              }];
+            } else if (rawObj.hls_link || best.attributes?.hls_link) {
+              qualities = [{
+                text: 'پخش مستقیم (HLS)',
+                size: '',
+                profile: 'HLS',
+                url: rawObj.hls_link || best.attributes?.hls_link,
+              }];
+            }
+
+            const highestUrl = qualities[0]?.url || rawObj.file_link || '';
+            const hlsUrl = rawObj.hls_link || best.attributes?.hls_link || '';
+            const streamTarget = highestUrl || hlsUrl;
+            const dur = parseInt(best.attributes?.duration) || 0;
+            const title = rawObj.title || best.attributes?.title || q;
+            const isDub = detectIsDubbed(title);
+            const isSub = detectIsSubbed(title);
+
+            const directMovieItem: AparatFullMovieItem = {
+              available: true,
+              title,
+              uid: best.attributes.uid,
+              pageUrl: `https://www.aparat.com/v/${best.attributes.uid}`,
+              embedUrl: `https://www.aparat.com/video/video/embed/videohash/${best.attributes.uid}/vt/frame`,
+              durationFormatted: dur > 0 ? `${Math.round(dur / 60)} دقیقه` : '',
+              durationSec: dur,
+              poster: rawObj.big_poster || rawObj.medium_poster || best.attributes?.big_poster,
+              provider: 'Aparat',
+              providerNameFa: 'آپارات',
+              qualities,
+              hlsStreamUrl: hlsUrl,
+              senderName: rawObj.sender_name || best.attributes?.sender_name || 'آپارات',
+              vlcUrl: streamTarget ? `vlc://${streamTarget}` : undefined,
+              potPlayerUrl: streamTarget ? `potplayer://${streamTarget}` : undefined,
+              mxPlayerUrl: streamTarget ? `intent:${streamTarget}#Intent;package=com.mxtech.videoplayer.ad;type=video/*;end` : undefined,
+              isDubbed: isDub,
+              isSubbed: isSub,
+              versionType: isDub ? 'dubbed' : (isSub ? 'subbed' : 'original'),
+              maxQualityScore: parseQualityRank(qualities),
+            };
+
+            return res.json({
+              success: true,
+              data: directMovieItem,
+              alternateResults,
+            });
+          }
+        } catch (detailErr) {
+          console.warn('Direct Aparat video detail extraction error:', detailErr);
+        }
+      }
+    }
+
+    // Try series search as last resort if not tried already
+    if (!isSeriesQuery) {
+      try {
+        const fallbackSeries = await searchAparatSeries(q, q);
+        if (fallbackSeries && fallbackSeries.available) {
+          return res.json({
+            success: true,
+            data: {
+              available: true,
+              title: q,
+              isSeries: true,
+              provider: 'Aparat/Namasha',
+              providerNameFa: 'سرورهای داخلی',
+            },
+            seriesData: fallbackSeries,
+            alternateResults,
+          });
+        }
+      } catch {}
+    }
+
+    return res.json({
+      success: false,
+      message: 'موردی در آپارات یافت نشد. می‌توانید با کلمات کلیدی دیگر جستجو کنید.',
+      alternateResults,
+    });
+  } catch (err: any) {
+    console.error('aparat-search error:', err);
     res.status(500).json({ success: false, error: err.message });
   }
 });
@@ -2234,7 +2670,7 @@ app.get('/api/stream-proxy', async (req: Request, res: Response) => {
   const download = req.query.download === '1' || req.query.download === 'true';
 
   if (!mediaUrl) {
-    return res.status(400).json({ error: 'Missing url parameter' });
+    return res.status(400).json({ success: false, error: 'MISSING_URL_PARAM', message: 'Missing url parameter' });
   }
 
   // Inject CORS and streaming headers immediately
@@ -2249,6 +2685,16 @@ app.get('/api/stream-proxy', async (req: Request, res: Response) => {
     const filename = path.basename(parsedUrl.pathname) || 'video.mp4';
     const ext = path.extname(parsedUrl.pathname).toLowerCase();
 
+    // Parse optional custom headers passed via query parameter (e.g. headers={"Cookie":"..."})
+    let customHeaders: Record<string, string> = {};
+    if (req.query.headers && typeof req.query.headers === 'string') {
+      try {
+        customHeaders = JSON.parse(req.query.headers);
+      } catch (e) {
+        console.warn('Failed to parse custom proxy headers query param:', e);
+      }
+    }
+
     // Prepare proxy headers: simulate desktop browser request with Referer/User-Agent masquerading
     const proxyHeaders: Record<string, string> = {
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
@@ -2256,6 +2702,7 @@ app.get('/api/stream-proxy', async (req: Request, res: Response) => {
       'Origin': parsedUrl.origin,
       'Accept': '*/*',
       'Accept-Language': 'en-US,en;q=0.9,fa;q=0.8',
+      ...customHeaders,
     };
 
     // Forward byte range if requested by HTML5 video element or download manager
@@ -2265,58 +2712,64 @@ app.get('/api/stream-proxy', async (req: Request, res: Response) => {
       proxyHeaders['Accept-Encoding'] = 'identity';
     }
 
-    let upstreamResponse = await fetch(mediaUrl, {
+    const upstreamResponse = await fetch(mediaUrl, {
       method: 'GET',
       headers: proxyHeaders,
     });
 
-    let contentType = upstreamResponse.headers.get('content-type') || '';
+    const contentType = upstreamResponse.headers.get('content-type') || '';
 
-    // If upstream rejects (403, 404, or returns XML/HTML error page)
-    if (!upstreamResponse.ok || contentType.includes('xml') || (contentType.includes('html') && !mediaUrl.includes('.m3u8'))) {
-      console.warn(`Upstream failed (${upstreamResponse.status}, ${contentType}) for: ${mediaUrl}`);
-
-      // Attempt failover: Check if another working mirror exists in the local CATALOG
-      const catalogItem = CATALOG.find(item =>
-        item.streamSources?.some(s => s.qualities.some(q => q.url === mediaUrl))
-      );
-      if (catalogItem) {
-        const altQuality = catalogItem.streamSources
-          ?.flatMap(s => s.qualities)
-          .find(q => q.url !== mediaUrl && !q.url.toLowerCase().includes('upera.tv'));
-        if (altQuality) {
-          console.log(`[Failover] Switching to alternative mirror: ${altQuality.url}`);
-          upstreamResponse = await fetch(altQuality.url, {
-            method: 'GET',
-            headers: proxyHeaders,
-          });
-          contentType = upstreamResponse.headers.get('content-type') || '';
-        }
-      }
+    // If upstream returns 403, 404, 502 or other unrecoverable errors, return clean structured JSON
+    if (!upstreamResponse.ok && [403, 404, 500, 502, 503, 504].includes(upstreamResponse.status)) {
+      console.warn(`[Stream Proxy] Upstream unreachable (${upstreamResponse.status}) for: ${mediaUrl}`);
+      return res.status(upstreamResponse.status).json({
+        success: false,
+        error: 'UPSTREAM_UNREACHABLE',
+        code: upstreamResponse.status,
+        url: mediaUrl,
+      });
     }
 
-    // If still failing or blocked by CDN anti-leech
-    if (!upstreamResponse.ok || contentType.includes('xml') || (contentType.includes('html') && !mediaUrl.includes('.m3u8'))) {
-      console.warn(`[Proxy Resilient Engine] Upstream rejected (${upstreamResponse.status}, ${contentType}) for: ${mediaUrl}. Serving reliable fallback stream...`);
+    // Handle HLS playlist rewriting (.m3u8) so all child segments and playlists route through proxy
+    const isM3U8 =
+      ext === '.m3u8' ||
+      contentType.includes('application/x-mpegurl') ||
+      contentType.includes('application/vnd.apple.mpegurl');
 
-      const is720 = mediaUrl.toLowerCase().includes('720');
-      const reliableMirrorUrl = is720
-        ? 'https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/720/Big_Buck_Bunny_720_10s_5MB.mp4'
-        : 'https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/1080/Big_Buck_Bunny_1080_10s_5MB.mp4';
+    if (isM3U8) {
+      const playlistText = await upstreamResponse.text();
+      const rewrittenLines = playlistText.split('\n').map((line) => {
+        const trimmed = line.trim();
+        if (!trimmed) return line;
 
-      const mirrorHeaders: Record<string, string> = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        'Accept': '*/*',
-      };
-      if (req.headers.range) {
-        mirrorHeaders['Range'] = req.headers.range as string;
-      }
+        // Rewrite tags with URI attributes (e.g. #EXT-X-KEY, #EXT-X-MAP, #EXT-X-MEDIA)
+        if (trimmed.startsWith('#')) {
+          if (trimmed.includes('URI="')) {
+            return trimmed.replace(/URI="([^"]+)"/g, (_, uri) => {
+              try {
+                const resolved = new URL(uri, mediaUrl).href;
+                return `URI="/api/stream-proxy?url=${encodeURIComponent(resolved)}"`;
+              } catch {
+                return `URI="${uri}"`;
+              }
+            });
+          }
+          return line;
+        }
 
-      upstreamResponse = await fetch(reliableMirrorUrl, {
-        method: 'GET',
-        headers: mirrorHeaders,
+        // Rewrite segment (.ts) or child playlist (.m3u8) URLs
+        try {
+          const resolved = new URL(trimmed, mediaUrl).href;
+          return `/api/stream-proxy?url=${encodeURIComponent(resolved)}`;
+        } catch {
+          return line;
+        }
       });
-      contentType = 'video/mp4';
+
+      const rewrittenPlaylist = rewrittenLines.join('\n');
+      res.setHeader('Content-Type', 'application/x-mpegURL');
+      res.setHeader('Content-Length', Buffer.byteLength(rewrittenPlaylist));
+      return res.status(200).send(rewrittenPlaylist);
     }
 
     // Set status code (e.g. 200 OK or 206 Partial Content)
@@ -2368,8 +2821,9 @@ app.get('/api/stream-proxy', async (req: Request, res: Response) => {
     console.error('Error in /api/stream-proxy:', err.message);
     if (!res.headersSent) {
       res.status(502).json({
-        error: 'STREAM_PROXY_ERROR',
-        message: 'خطا در برقراری ارتباط با سرور رسانه. ممکن است آدرس ویدیو منقضی شده یا سرور موقتاً در دسترس نباشد.',
+        success: false,
+        error: 'UPSTREAM_UNREACHABLE',
+        code: 502,
         details: err.message,
       });
     }

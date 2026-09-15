@@ -151,12 +151,19 @@ export const HlsVideoPlayer: React.FC<HlsVideoPlayerProps> = ({
           detail = 'خطا در رمزگشایی تصویر. کدک ویدیو (احتمالاً HEVC/x265) در این مرورگر پشتیبانی نمی‌شود.';
           break;
         case MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED:
-          detail = 'آدرس یا فرمت فایل ویدیو پشتیبانی نشد یا بدون هدر معتبر CORS رد شد.';
+          detail = 'آدرس یا فرمت فایل ویدیو پشتیبانی نشد یا ارتباط با سرور قطع شد.';
           break;
       }
     }
 
-    triggerProxyFallback(detail);
+    if (hasTriedProxy) {
+      setHasError(true);
+      setErrorMessage(
+        'پخش مستقیم CDN و پروکسی میانی ناموفق بود. منبع اصلی در دسترس نیست یا فرمت سازگار با مرورگر ندارد. لطفاً از سرورهای آینه (سطح ۲) استفاده کنید.'
+      );
+    } else {
+      triggerProxyFallback(detail);
+    }
   };
 
   if (hasError) {
@@ -223,7 +230,7 @@ export const HlsVideoPlayer: React.FC<HlsVideoPlayerProps> = ({
         controls
         playsInline
         poster={poster}
-        crossOrigin="anonymous"
+        crossOrigin={currentSrc.startsWith('/api/stream-proxy') ? 'anonymous' : undefined}
         onError={handleVideoError}
         className={className}
       >

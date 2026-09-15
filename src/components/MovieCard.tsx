@@ -23,10 +23,29 @@ export const MovieCard: React.FC<MovieCardProps> = ({
   const [isInspecting, setIsInspecting] = useState<boolean>(false);
   const [availability, setAvailability] = useState<SourceAvailability[] | null>(null);
   const [isLoadingAvailability, setIsLoadingAvailability] = useState<boolean>(false);
+  const [imgSrc, setImgSrc] = useState<string>(item.posterUrl || '');
+  const [hasTriedProxy, setHasTriedProxy] = useState<boolean>(false);
   const [imgError, setImgError] = useState<boolean>(false);
 
   const debounceTimerRef = useRef<any>(null);
   const tvElementId = `movie-${sliderKey}-${item.id}`;
+
+  useEffect(() => {
+    setImgSrc(item.posterUrl || '');
+    setHasTriedProxy(false);
+    setImgError(false);
+  }, [item.posterUrl, item.id]);
+
+  const handleImageError = () => {
+    if (!hasTriedProxy && imgSrc && !imgSrc.startsWith('/api/image-proxy')) {
+      setHasTriedProxy(true);
+      setImgSrc(`/api/image-proxy?url=${encodeURIComponent(imgSrc)}`);
+    } else if (item.backdropUrl && imgSrc !== item.backdropUrl && !imgSrc.includes(encodeURIComponent(item.backdropUrl))) {
+      setImgSrc(item.backdropUrl);
+    } else {
+      setImgError(true);
+    }
+  };
 
   /**
    * Hover / Focus Inspection with 120ms response time as required.
@@ -132,13 +151,13 @@ export const MovieCard: React.FC<MovieCardProps> = ({
           className="relative w-full overflow-hidden bg-zinc-950 media-card-poster"
           style={{ height: '240px', minHeight: '240px' }}
         >
-          {!imgError && item.posterUrl ? (
+          {!imgError && imgSrc ? (
             <img
-              src={item.posterUrl}
+              src={imgSrc}
               alt={item.titleFa || item.title}
               className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
               loading="lazy"
-              onError={() => setImgError(true)}
+              onError={handleImageError}
             />
           ) : (
             <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-zinc-900 to-zinc-950 p-4 text-center">

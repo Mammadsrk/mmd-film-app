@@ -21,11 +21,57 @@ interface WebTorrentPlayerProps {
 
 // Trackers supporting WebRTC data channels for in-browser streaming
 const WEBRTC_TRACKERS = [
-  'wss://tracker.btorrent.xyz',
   'wss://tracker.openwebtorrent.com',
-  'wss://tracker.webtorrent.dev',
+  'wss://tracker.btorrent.xyz',
+  'wss://tracker.fastcast.nz',
   'wss://tracker.files.fm:7073/announce',
 ];
+
+/**
+ * Dynamic WebTorrent loader with fallback and verification
+ */
+async function getWebTorrentClient(): Promise<any> {
+  if (typeof window !== 'undefined' && (window as any).WebTorrent) {
+    return new (window as any).WebTorrent({
+      tracker: {
+        rtcConfig: {
+          iceServers: [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:global.stun.twilio.com:3478' },
+          ],
+        },
+      },
+    });
+  }
+
+  return new Promise((resolve, reject) => {
+    const existingScript = document.querySelector('script[src*="webtorrent.min.js"]');
+    if (existingScript) {
+      existingScript.addEventListener('load', () => {
+        if ((window as any).WebTorrent) {
+          resolve(new (window as any).WebTorrent());
+        } else {
+          reject(new Error('WebTorrent CDN unavailable'));
+        }
+      });
+      existingScript.addEventListener('error', () => reject(new Error('WebTorrent CDN unavailable')));
+      return;
+    }
+
+    const script = document.createElement('script');
+    script.src = 'https://cdn.jsdelivr.net/npm/webtorrent@latest/webtorrent.min.js';
+    script.async = true;
+    script.onload = () => {
+      if ((window as any).WebTorrent) {
+        resolve(new (window as any).WebTorrent());
+      } else {
+        reject(new Error('WebTorrent CDN unavailable'));
+      }
+    };
+    script.onerror = () => reject(new Error('WebTorrent CDN unavailable'));
+    document.head.appendChild(script);
+  });
+}
 
 export const WebTorrentPlayer: React.FC<WebTorrentPlayerProps> = ({
   torrent,
@@ -44,6 +90,7 @@ export const WebTorrentPlayer: React.FC<WebTorrentPlayerProps> = ({
   const [progress, setProgress] = useState<number>(0);
   const [downloadSpeed, setDownloadSpeed] = useState<string>('0 KB/s');
   const [isCopied, setIsCopied] = useState<boolean>(false);
+  const [showPeerWarning, setShowPeerWarning] = useState<boolean>(false);
 
   // Format magnet URL to guarantee WebRTC trackers are attached
   const buildWebRtcMagnet = (magnet: string): string => {
@@ -65,54 +112,38 @@ export const WebTorrentPlayer: React.FC<WebTorrentPlayerProps> = ({
   useEffect(() => {
     let isCancelled = false;
     let peerTimeoutTimer: any = null;
+    let peerWarningTimer: any = null;
 
     const loadAndStartWebTorrent = async () => {
       try {
         setStatus('initializing');
+        setShowPeerWarning(false);
 
-        // Dynamically load WebTorrent browser library if not present on window
-        if (!(window as any).WebTorrent) {
-          await new Promise<void>((resolve, reject) => {
-            const script = document.createElement('script');
-            script.src = 'https://cdn.jsdelivr.net/npm/webtorrent@latest/webtorrent.min.js';
-            script.async = true;
-            script.onload = () => resolve();
-            script.onerror = () => reject(new Error('خطا در بارگذاری موتور WebTorrent مرورگر'));
-            document.head.appendChild(script);
-          });
+        const client = await getWebTorrentClient();
+        if (isCancelled) {
+          try { client.destroy(); } catch (_) {}
+          return;
         }
 
-        if (isCancelled) return;
-
-        const WebTorrentConstructor = (window as any).WebTorrent;
-        if (!WebTorrentConstructor) {
-          throw new Error('کتابخانه WebTorrent در دسترس نیست.');
-        }
-
-        // Initialize WebTorrent client with WebRTC ICE configuration
-        const client = new WebTorrentConstructor({
-          tracker: {
-            rtcConfig: {
-              iceServers: [
-                { urls: 'stun:stun.l.google.com:19302' },
-                { urls: 'stun:global.stun.twilio.com:3478' },
-              ],
-            },
-          },
-        });
         clientRef.current = client;
-
         setStatus('connecting');
 
         const magnetWithTrackers = buildWebRtcMagnet(torrent.magnetUrl);
 
-        // Fallback timer: 10-second timeout if no WebRTC peers are discovered
+        // 12-second watchdog timer: if peers count remains 0, warn the user and suggest external player / direct magnet
+        peerWarningTimer = setTimeout(() => {
+          if (!isCancelled && (!activeTorrentRef.current || activeTorrentRef.current.numPeers === 0)) {
+            setShowPeerWarning(true);
+          }
+        }, 12000);
+
+        // Total timeout timer: 20 seconds before offering full fallback screen
         peerTimeoutTimer = setTimeout(() => {
           if (!isCancelled && (!activeTorrentRef.current || activeTorrentRef.current.numPeers === 0)) {
             setStatus('fallback');
-            setErrorMessage('سیدر تحت وب (WebRTC) در بازه ۱۰ ثانیه‌ای آنلاین یافت نشد. برای پخش یا دانلود بدون وقفه از لینک مستقیم مگنت، دانلود منیجر یا سرورهای سطح ۲ استفاده کنید.');
+            setErrorMessage('تعداد پیرهای سازگار با مرورگر (WebRTC) ناکافی است. می‌توانید لینک مگنت را کپی کرده یا با نرم‌افزارهای تورنت/دانلود منیجر باز کنید.');
           }
-        }, 10000);
+        }, 20000);
 
         client.add(magnetWithTrackers, { announce: WEBRTC_TRACKERS }, (torrentInstance: any) => {
           if (isCancelled) return;
@@ -158,7 +189,11 @@ export const WebTorrentPlayer: React.FC<WebTorrentPlayerProps> = ({
           // Monitor download speed, progress, and peer count
           torrentInstance.on('download', () => {
             if (isCancelled) return;
-            setNumPeers(torrentInstance.numPeers);
+            const peers = torrentInstance.numPeers || 0;
+            setNumPeers(peers);
+            if (peers > 0) {
+              setShowPeerWarning(false);
+            }
             setProgress(Math.round(torrentInstance.progress * 100));
 
             const bytesSec = torrentInstance.downloadSpeed;
@@ -168,14 +203,16 @@ export const WebTorrentPlayer: React.FC<WebTorrentPlayerProps> = ({
               setDownloadSpeed(Math.round(bytesSec / 1024) + ' KB/s');
             }
 
-            if (torrentInstance.numPeers > 0 && status === 'connecting') {
+            if (peers > 0 && status === 'connecting') {
               setStatus('buffering');
             }
           });
 
           torrentInstance.on('wire', () => {
             if (isCancelled) return;
-            setNumPeers(torrentInstance.numPeers);
+            const peers = torrentInstance.numPeers || 0;
+            setNumPeers(peers);
+            if (peers > 0) setShowPeerWarning(false);
           });
 
           torrentInstance.on('noPeers', () => {
@@ -195,7 +232,7 @@ export const WebTorrentPlayer: React.FC<WebTorrentPlayerProps> = ({
         console.warn('[WebTorrent Init Error]', err);
         if (!isCancelled) {
           setStatus('fallback');
-          setErrorMessage(err.message || 'اتصال به شبکه تورنت امکان‌پذیر نشد.');
+          setErrorMessage(err.message || 'اتصال به موتور تورنت مرورگر با خطا مواجه شد.');
         }
       }
     };
@@ -204,6 +241,7 @@ export const WebTorrentPlayer: React.FC<WebTorrentPlayerProps> = ({
 
     return () => {
       isCancelled = true;
+      if (peerWarningTimer) clearTimeout(peerWarningTimer);
       if (peerTimeoutTimer) clearTimeout(peerTimeoutTimer);
       if (clientRef.current) {
         try {
@@ -358,6 +396,36 @@ export const WebTorrentPlayer: React.FC<WebTorrentPlayerProps> = ({
               <span>کیفیت: {torrent.quality}</span>
             </div>
           </div>
+
+          {/* 12-second Peer Discovery Watchdog Warning Banner */}
+          {showPeerWarning && (
+            <div className="w-full max-w-sm p-3 rounded-2xl bg-amber-500/15 border border-amber-500/30 text-amber-200 text-xs text-right space-y-2 animate-fadeIn">
+              <div className="flex items-center gap-1.5 font-bold text-amber-300">
+                <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+                <span>تعداد پیرهای سازگار با مرورگر ناکافی است</span>
+              </div>
+              <p className="text-[11px] leading-relaxed text-zinc-300 font-persian">
+                سیدرهای مستقیم تحت وب در دسترس نیستند. می‌توانید لینک مگنت را کپی کرده یا با نرم‌افزارهای تورنت/دانلود منیجر باز کنید.
+              </p>
+              <div className="flex items-center gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={handleCopy}
+                  className="flex-1 py-1.5 px-2.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 text-[11px] font-bold flex items-center justify-center gap-1 transition-all cursor-pointer font-persian"
+                >
+                  <Copy className="w-3 h-3" />
+                  <span>{isCopied ? 'کپی شد' : 'کپی لینک مگنت'}</span>
+                </button>
+                <a
+                  href={torrent.magnetUrl}
+                  className="flex-1 py-1.5 px-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-bold flex items-center justify-center gap-1 transition-all font-persian"
+                >
+                  <Download className="w-3 h-3" />
+                  <span>باز کردن در دانلودر</span>
+                </a>
+              </div>
+            </div>
+          )}
 
           {/* Fast Escape: fallback to online mirrors button */}
           <div className="pt-2 flex items-center gap-2">

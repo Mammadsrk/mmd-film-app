@@ -351,41 +351,21 @@ export const GlassRings: React.FC<GlassRingsProps> = ({
       }}
     >
       {/* Slider Header */}
-      <div className="flex items-center justify-between px-2 mb-2">
-        {/* Left: Step Navigators */}
-        <div className="flex items-center gap-1.5">
-          <button
-            id="btn-hub-scroll-left"
-            data-tv-id="hub-scroll-left"
-            onClick={() => handleStepScroll('left')}
-            aria-label="پیمایش به چپ"
-            title="حرکت به چپ"
-            className="p-1.5 rounded-xl bg-white/5 hover:bg-white/10 active:scale-95 border border-white/10 text-zinc-400 hover:text-white transition-all shadow-sm"
-          >
-            <ChevronLeft className="w-4 h-4" />
-          </button>
-          <button
-            id="btn-hub-scroll-right"
-            data-tv-id="hub-scroll-right"
-            onClick={() => handleStepScroll('right')}
-            aria-label="پیمایش به راست"
-            title="حرکت به راست"
-            className="p-1.5 rounded-xl bg-white/5 hover:bg-white/10 active:scale-95 border border-white/10 text-zinc-400 hover:text-white transition-all shadow-sm"
-          >
-            <ChevronRight className="w-4 h-4" />
-          </button>
-        </div>
-
-        {/* Right: Persian Title & Pulse Indicator */}
-        <div className="flex items-center gap-2">
+      <div className="flex items-center justify-between px-2 mb-1.5">
+        {/* Left: Active Filter Clear if selected */}
+        <div>
           {selectedHub && (
             <button
               onClick={() => onSelectHub(null)}
-              className="text-[11px] text-rose-400 hover:text-rose-300 font-persian underline ml-2 transition-colors"
+              className="text-[11px] text-rose-400 hover:text-rose-300 font-persian underline transition-colors cursor-pointer"
             >
               (نمایش همه مراجع)
             </button>
           )}
+        </div>
+
+        {/* Right: Persian Title & Pulse Indicator */}
+        <div className="flex items-center gap-2">
           <span className="text-xs sm:text-sm font-bold text-zinc-300 font-persian">
             مراجع ۷‌گانه استریم و دانلود
           </span>
@@ -505,6 +485,31 @@ export const GlassRings: React.FC<GlassRingsProps> = ({
         {/* Subtle Edge Gradients */}
         <div className="absolute left-0 inset-y-0 w-8 bg-gradient-to-r from-[#020204] to-transparent pointer-events-none z-10 hidden sm:block" />
         <div className="absolute right-0 inset-y-0 w-8 bg-gradient-to-l from-[#020204] to-transparent pointer-events-none z-10 hidden sm:block" />
+      </div>
+
+      {/* Centered Small Circular Glass Controls Under Slider */}
+      <div className="flex items-center justify-center gap-2.5 mt-2.5">
+        <button
+          id="btn-hub-scroll-right"
+          data-tv-id="hub-scroll-right"
+          onClick={() => handleStepScroll('right')}
+          aria-label="پیمایش به راست"
+          title="حرکت به راست"
+          className="w-7 h-7 rounded-full bg-white/5 hover:bg-white/15 active:scale-90 border border-white/15 backdrop-blur-md text-zinc-300 hover:text-white flex items-center justify-center transition-all shadow-md cursor-pointer"
+        >
+          <ChevronRight className="w-3.5 h-3.5" />
+        </button>
+        <div className="w-1.5 h-1.5 rounded-full bg-indigo-500/50" />
+        <button
+          id="btn-hub-scroll-left"
+          data-tv-id="hub-scroll-left"
+          onClick={() => handleStepScroll('left')}
+          aria-label="پیمایش به چپ"
+          title="حرکت به چپ"
+          className="w-7 h-7 rounded-full bg-white/5 hover:bg-white/15 active:scale-90 border border-white/15 backdrop-blur-md text-zinc-300 hover:text-white flex items-center justify-center transition-all shadow-md cursor-pointer"
+        >
+          <ChevronLeft className="w-3.5 h-3.5" />
+        </button>
       </div>
     </div>
   );

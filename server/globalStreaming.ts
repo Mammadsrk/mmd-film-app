@@ -152,7 +152,9 @@ async function fetchTorrentsFromApibay(query: string, cleanTitle: string): Promi
  * Aggregates Tier 1 (Direct CDN), Tier 2 (Embed Mirrors), and Tier 3 (Torrent/Magnets)
  */
 export async function resolveGlobalStreaming(options: ResolveGlobalOptions): Promise<GlobalStreamingData> {
-  const tmdbId = options.tmdbId || 0;
+  const rawTmdb = options.tmdbId ? parseInt(String(options.tmdbId), 10) : 0;
+  const tmdbId = isNaN(rawTmdb) ? 0 : rawTmdb;
+  const embedId = String(options.tmdbId || options.imdbId || '0');
   const imdbId = (options.imdbId || '').trim();
   const rawTitle = (options.title || 'Movie').trim();
   const cleanTitle = cleanSearchTitle(rawTitle);
@@ -164,9 +166,9 @@ export async function resolveGlobalStreaming(options: ResolveGlobalOptions): Pro
   const serverPingMs = Math.floor(18 + Math.random() * 15);
 
   // --- Tier 1: Direct Streams & Adaptive Fallback ---
-  const direct1 = `https://player.videasy.to/${isTv ? `tv/${tmdbId}/${season}/${episode}` : `movie/${tmdbId}`}`;
-  const direct2 = `https://vidlink.pro/${isTv ? `tv/${tmdbId}/${season}/${episode}` : `movie/${tmdbId}`}`;
-  const direct3 = `https://vidsrc.cc/v2/embed/${isTv ? `tv/${tmdbId}/${season}/${episode}` : `movie/${tmdbId}`}`;
+  const direct1 = `https://player.videasy.to/${isTv ? `tv/${embedId}/${season}/${episode}` : `movie/${embedId}`}`;
+  const direct2 = `https://vidlink.pro/${isTv ? `tv/${embedId}/${season}/${episode}` : `movie/${embedId}`}`;
+  const direct3 = `https://vidsrc.cc/v2/embed/${isTv ? `tv/${embedId}/${season}/${episode}` : `movie/${embedId}`}`;
 
   const directStreams: GlobalDirectStream[] = [
     {
@@ -205,7 +207,7 @@ export async function resolveGlobalStreaming(options: ResolveGlobalOptions): Pro
           id: 'mirror_vidsrc_cc_tv',
           name: 'سرور ۱: VidSrc CC (پیشنهادی / نسخه ۲)',
           provider: 'VidSrc.cc',
-          url: `https://vidsrc.cc/v2/embed/tv/${tmdbId}/${season}/${episode}`,
+          url: `https://vidsrc.cc/v2/embed/tv/${embedId}/${season}/${episode}`,
           badge: 'پیشنهادی (v2)',
           status: 'پایدار و بدون قطعی',
           isDefault: true,
@@ -214,7 +216,7 @@ export async function resolveGlobalStreaming(options: ResolveGlobalOptions): Pro
           id: 'mirror_vidsrc_xyz_tv',
           name: 'سرور ۲: VidSrc XYZ (آینه اصلی پرو)',
           provider: 'VidSrc.xyz',
-          url: `https://vidsrc.xyz/embed/tv?tmdb=${tmdbId}&season=${season}&episode=${episode}`,
+          url: `https://vidsrc.xyz/embed/tv?tmdb=${embedId}&season=${season}&episode=${episode}`,
           badge: 'پرو / بدون تحریم',
           status: 'پرسرعت',
         },
@@ -222,7 +224,7 @@ export async function resolveGlobalStreaming(options: ResolveGlobalOptions): Pro
           id: 'mirror_autoembed_tv',
           name: 'سرور ۳: AutoEmbed (پلیر هوشمند با زیرنویس)',
           provider: 'AutoEmbed',
-          url: `https://player.autoembed.cc/embed/tv/${tmdbId}/${season}/${episode}`,
+          url: `https://player.autoembed.cc/embed/tv/${embedId}/${season}/${episode}`,
           badge: 'AutoEmbed',
           status: 'فعال',
         },
@@ -230,7 +232,7 @@ export async function resolveGlobalStreaming(options: ResolveGlobalOptions): Pro
           id: 'mirror_multiembed_tv',
           name: 'سرور ۴: MultiEmbed (مولتی‌استریم کمکی)',
           provider: 'MultiEmbed',
-          url: `https://multiembed.mov/?video_id=${tmdbId}&tmdb=1&s=${season}&e=${episode}`,
+          url: `https://multiembed.mov/?video_id=${embedId}&tmdb=1&s=${season}&e=${episode}`,
           badge: 'Multi-Source',
           status: 'پشتیبان',
         },
@@ -238,7 +240,7 @@ export async function resolveGlobalStreaming(options: ResolveGlobalOptions): Pro
           id: 'mirror_vidlink_tv',
           name: 'سرور ۵: VidLink Pro (Ultra HD)',
           provider: 'VidLink.pro',
-          url: `https://vidlink.pro/tv/${tmdbId}/${season}/${episode}?primaryColor=6366f1`,
+          url: `https://vidlink.pro/tv/${embedId}/${season}/${episode}?primaryColor=6366f1`,
           badge: 'Ultra HD',
           status: 'پرسرعت',
         },
@@ -246,7 +248,7 @@ export async function resolveGlobalStreaming(options: ResolveGlobalOptions): Pro
           id: 'mirror_videasy_tv',
           name: 'سرور ۶: Videasy (پخش روان)',
           provider: 'Videasy.to',
-          url: `https://player.videasy.to/tv/${tmdbId}/${season}/${episode}`,
+          url: `https://player.videasy.to/tv/${embedId}/${season}/${episode}`,
           badge: '1080p',
           status: 'پایدار',
         },
@@ -256,7 +258,7 @@ export async function resolveGlobalStreaming(options: ResolveGlobalOptions): Pro
           id: 'mirror_vidsrc_cc_movie',
           name: 'سرور ۱: VidSrc CC (پیشنهادی / نسخه ۲)',
           provider: 'VidSrc.cc',
-          url: `https://vidsrc.cc/v2/embed/movie/${tmdbId}`,
+          url: `https://vidsrc.cc/v2/embed/movie/${embedId}`,
           badge: 'پیشنهادی (v2)',
           status: 'پایدار و بدون قطعی',
           isDefault: true,
@@ -265,7 +267,7 @@ export async function resolveGlobalStreaming(options: ResolveGlobalOptions): Pro
           id: 'mirror_vidsrc_xyz_movie',
           name: 'سرور ۲: VidSrc XYZ (آینه اصلی پرو)',
           provider: 'VidSrc.xyz',
-          url: `https://vidsrc.xyz/embed/movie/${tmdbId}`,
+          url: `https://vidsrc.xyz/embed/movie/${embedId}`,
           badge: 'پرو / بدون تحریم',
           status: 'پرسرعت',
         },
@@ -273,7 +275,7 @@ export async function resolveGlobalStreaming(options: ResolveGlobalOptions): Pro
           id: 'mirror_autoembed_movie',
           name: 'سرور ۳: AutoEmbed (پلیر هوشمند با زیرنویس)',
           provider: 'AutoEmbed',
-          url: `https://player.autoembed.cc/embed/movie/${tmdbId}`,
+          url: `https://player.autoembed.cc/embed/movie/${embedId}`,
           badge: 'AutoEmbed',
           status: 'فعال',
         },
@@ -281,7 +283,7 @@ export async function resolveGlobalStreaming(options: ResolveGlobalOptions): Pro
           id: 'mirror_multiembed_movie',
           name: 'سرور ۴: MultiEmbed (مولتی‌استریم کمکی)',
           provider: 'MultiEmbed',
-          url: `https://multiembed.mov/?video_id=${tmdbId}&tmdb=1`,
+          url: `https://multiembed.mov/?video_id=${embedId}&tmdb=1`,
           badge: 'Multi-Source',
           status: 'پشتیبان',
         },
@@ -289,7 +291,7 @@ export async function resolveGlobalStreaming(options: ResolveGlobalOptions): Pro
           id: 'mirror_vidlink_movie',
           name: 'سرور ۵: VidLink Pro (Ultra HD)',
           provider: 'VidLink.pro',
-          url: `https://vidlink.pro/movie/${tmdbId}?primaryColor=6366f1`,
+          url: `https://vidlink.pro/movie/${embedId}?primaryColor=6366f1`,
           badge: 'Ultra HD',
           status: 'پرسرعت',
         },
@@ -297,7 +299,7 @@ export async function resolveGlobalStreaming(options: ResolveGlobalOptions): Pro
           id: 'mirror_videasy_movie',
           name: 'سرور ۶: Videasy (پخش روان)',
           provider: 'Videasy.to',
-          url: `https://player.videasy.to/movie/${tmdbId}`,
+          url: `https://player.videasy.to/movie/${embedId}`,
           badge: '1080p',
           status: 'پایدار',
         },
