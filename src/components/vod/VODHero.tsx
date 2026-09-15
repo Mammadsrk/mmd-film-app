@@ -79,7 +79,7 @@ export const VODHero: React.FC<VODHeroProps> = ({
   const primaryStreamLink = availableQualities[0]?.url || fullMovie?.hlsStreamUrl || item.sourceUrl || '';
 
   return (
-    <div className="relative w-full overflow-hidden bg-gradient-to-b from-[#0e1017]/90 via-[#0a0b10] to-[#08090d] border-b border-white/5">
+    <div className={`relative w-full bg-gradient-to-b from-[#0e1017]/90 via-[#0a0b10] to-[#08090d] border-b border-white/5 ${isCopyMenuOpen ? 'z-40' : 'z-10'}`}>
       {/* Background Cinematic Art with Smooth Vignette */}
       <div className="absolute inset-0 pointer-events-none select-none overflow-hidden">
         {backdrop && (
@@ -206,32 +206,43 @@ export const VODHero: React.FC<VODHeroProps> = ({
 
             {/* Copy Stream Link Dropdown Menu */}
             {(availableQualities.length > 0 || primaryStreamLink) && (
-              <div className="relative" ref={copyMenuRef}>
+              <div className={`relative ${isCopyMenuOpen ? 'z-50' : 'z-10'}`} ref={copyMenuRef}>
                 <button
                   type="button"
                   onClick={() => setIsCopyMenuOpen(!isCopyMenuOpen)}
                   data-tv-id="modal-copy-menu-btn"
-                  className="tv-focusable px-3 py-2.5 rounded-xl bg-zinc-900/80 hover:bg-zinc-800 text-zinc-300 hover:text-white border border-zinc-800 text-xs flex items-center gap-1.5 transition-all cursor-pointer shadow-sm"
+                  className={`tv-focusable px-3 py-2.5 rounded-xl text-xs flex items-center gap-1.5 transition-all cursor-pointer shadow-md ${
+                    isCopyMenuOpen
+                      ? 'bg-amber-400 text-black font-bold border border-amber-400 ring-2 ring-amber-400/30'
+                      : 'bg-zinc-900/90 hover:bg-zinc-800 text-zinc-200 hover:text-white border border-zinc-700/80'
+                  }`}
                   title="کپی لینک پخش برای پلیرهای خارجی (VLC، PotPlayer)"
                 >
-                  <Copy className="w-3.5 h-3.5 text-amber-400" />
+                  <Copy className={`w-3.5 h-3.5 ${isCopyMenuOpen ? 'text-black' : 'text-amber-400'}`} />
                   <span>کپی لینک پخش</span>
-                  <ChevronDown className={`w-3.5 h-3.5 text-zinc-400 transition-transform ${isCopyMenuOpen ? 'rotate-180' : ''}`} />
+                  <ChevronDown className={`w-3.5 h-3.5 transition-transform ${isCopyMenuOpen ? 'rotate-180 text-black' : 'text-zinc-400'}`} />
                 </button>
 
                 {isCopyMenuOpen && (
                   <div
-                    className="absolute left-0 sm:right-0 mt-2 w-64 bg-zinc-900/95 border border-zinc-700/80 rounded-2xl shadow-2xl p-2 z-50 animate-scale-up space-y-1.5 backdrop-blur-xl"
+                    className="absolute right-0 top-full mt-2 w-72 sm:w-80 bg-[#10121a] border border-zinc-700/90 rounded-2xl shadow-[0_25px_60px_rgba(0,0,0,0.95)] p-2.5 z-[100] animate-scale-up space-y-1.5 backdrop-blur-2xl"
                     onClick={(e) => e.stopPropagation()}
                     dir="rtl"
                   >
-                    <div className="px-2.5 py-1.5 border-b border-zinc-800">
-                      <span className="text-[11px] font-bold text-zinc-300 block">انتخاب کیفیت جهت کپی لینک:</span>
-                      <span className="text-[9px] text-zinc-500">جهت پخش دستی در VLC، PotPlayer یا دانلودر</span>
+                    <div className="px-2.5 py-1.5 border-b border-zinc-800/90 flex items-center justify-between">
+                      <div>
+                        <span className="text-[11px] font-bold text-zinc-100 block">انتخاب کیفیت جهت کپی لینک:</span>
+                        <span className="text-[9px] text-zinc-400">مناسب پلیر خارجی (VLC، PotPlayer) یا دانلودر</span>
+                      </div>
+                      {(isDubbed || isSubbed) && (
+                        <span className="text-[9px] px-2 py-0.5 rounded-md font-bold bg-amber-400/15 text-amber-300 border border-amber-400/30">
+                          {isDubbed ? 'دوبله فارسی' : 'زیرنویس فارسی'}
+                        </span>
+                      )}
                     </div>
 
                     {availableQualities.length > 0 ? (
-                      <div className="max-h-56 overflow-y-auto space-y-1 custom-scrollbar pr-0.5">
+                      <div className="max-h-60 overflow-y-auto space-y-1 custom-scrollbar pr-0.5">
                         {availableQualities.map((q, idx) => {
                           const isCopied = copiedStreamUrl === q.url;
                           const cleanQualityText = q.text.replace(/^با\s+/, '');
@@ -244,28 +255,37 @@ export const VODHero: React.FC<VODHeroProps> = ({
                               }}
                               className={`w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-xs transition-all text-right cursor-pointer ${
                                 isCopied
-                                  ? 'bg-emerald-950/60 text-emerald-300 border border-emerald-500/40'
-                                  : 'hover:bg-zinc-800 text-zinc-300 hover:text-white'
+                                  ? 'bg-emerald-950/80 text-emerald-300 border border-emerald-500/50'
+                                  : 'hover:bg-zinc-800/90 bg-zinc-900/70 text-zinc-200 hover:text-white border border-zinc-800/80'
                               }`}
                             >
                               <div className="flex items-center gap-2">
-                                <span className="w-2 h-2 rounded-full bg-amber-400/80" />
-                                <span className="font-bold text-[11px]">{cleanQualityText}</span>
-                                {q.size && (
-                                  <span className="text-[10px] text-zinc-500 font-mono">({q.size})</span>
-                                )}
+                                <span className="w-2 h-2 rounded-full bg-amber-400 shrink-0" />
+                                <div>
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="font-bold text-[11px] text-zinc-100">{cleanQualityText}</span>
+                                    {isDubbed ? (
+                                      <span className="text-[8px] px-1 py-0.5 bg-amber-400/20 text-amber-300 rounded font-medium">دوبله</span>
+                                    ) : isSubbed ? (
+                                      <span className="text-[8px] px-1 py-0.5 bg-emerald-500/20 text-emerald-300 rounded font-medium">زیرنویس</span>
+                                    ) : null}
+                                  </div>
+                                  {q.size && (
+                                    <span className="text-[10px] text-zinc-400 font-mono block">({q.size})</span>
+                                  )}
+                                </div>
                               </div>
-                              <span className="flex items-center gap-1 text-[10px] text-zinc-400">
+                              <span className="flex items-center gap-1 text-[10px] shrink-0">
                                 {isCopied ? (
                                   <>
                                     <Check className="w-3.5 h-3.5 text-emerald-400" />
                                     <span className="text-emerald-400 font-bold">کپی شد!</span>
                                   </>
                                 ) : (
-                                  <>
-                                    <Copy className="w-3 h-3 text-zinc-500" />
+                                  <span className="px-2 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 flex items-center gap-1">
+                                    <Copy className="w-3 h-3 text-amber-400" />
                                     <span>کپی</span>
-                                  </>
+                                  </span>
                                 )}
                               </span>
                             </button>
@@ -277,20 +297,30 @@ export const VODHero: React.FC<VODHeroProps> = ({
                         <button
                           type="button"
                           onClick={() => onCopyStreamLink(primaryStreamLink)}
-                          className="w-full flex items-center justify-between px-2.5 py-2 rounded-xl text-xs hover:bg-zinc-800 text-zinc-300 hover:text-white transition-all text-right cursor-pointer"
+                          className={`w-full flex items-center justify-between px-2.5 py-2.5 rounded-xl text-xs transition-all text-right cursor-pointer ${
+                            copiedStreamUrl === primaryStreamLink
+                              ? 'bg-emerald-950/80 text-emerald-300 border border-emerald-500/50'
+                              : 'hover:bg-zinc-800/90 bg-zinc-900/70 text-zinc-200 hover:text-white border border-zinc-800/80'
+                          }`}
                         >
-                          <span className="font-bold text-[11px]">لینک مستقیم استریم</span>
-                          <span className="flex items-center gap-1 text-[10px] text-zinc-400">
+                          <div className="flex items-center gap-2">
+                            <span className="w-2 h-2 rounded-full bg-amber-400 shrink-0" />
+                            <div>
+                              <span className="font-bold text-[11px] block">لینک مستقیم استریم</span>
+                              <span className="text-[9px] text-zinc-400">کیفیت اصلی پیش‌فرض</span>
+                            </div>
+                          </div>
+                          <span className="flex items-center gap-1 text-[10px] text-zinc-400 shrink-0">
                             {copiedStreamUrl === primaryStreamLink ? (
                               <>
                                 <Check className="w-3.5 h-3.5 text-emerald-400" />
                                 <span className="text-emerald-400 font-bold">کپی شد!</span>
                               </>
                             ) : (
-                              <>
-                                <Copy className="w-3 h-3 text-zinc-500" />
+                              <span className="px-2 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 flex items-center gap-1">
+                                <Copy className="w-3 h-3 text-amber-400" />
                                 <span>کپی</span>
-                              </>
+                              </span>
                             )}
                           </span>
                         </button>

@@ -110,14 +110,25 @@ function computeSourceAvailability(rawQuery: string): any[] {
    1. TMDB Aggregator Endpoints
    ========================================================================== */
 
+const DEFAULT_TMDB_API_KEY = '1d5c680c4118cd9d172f1e762db4c69e';
+
+/**
+ * Returns TMDB API key from env, falling back to valid configured key
+ */
+function getTmdbApiKey(): string {
+  const envKey = process.env.TMDB_API_KEY;
+  if (envKey && envKey !== 'YOUR_TMDB_API_KEY' && envKey.trim() !== '') {
+    return envKey.trim();
+  }
+  return DEFAULT_TMDB_API_KEY;
+}
+
 /**
  * GET /api/config/tmdb
  * Provides public client-side TMDB discovery key
  */
 app.get('/api/config/tmdb', (req: Request, res: Response) => {
-  const apiKey = (process.env.TMDB_API_KEY && process.env.TMDB_API_KEY !== 'YOUR_TMDB_API_KEY')
-    ? process.env.TMDB_API_KEY
-    : 'b0c22421f649bb77ecbfca44c207d727';
+  const apiKey = getTmdbApiKey();
   res.json({ apiKey });
 });
 
@@ -298,9 +309,7 @@ const HORROR_MEDIA_CATALOG = [
  * Fetches top trending movies up to 24 items.
  */
 app.get('/api/tmdb/trending-movies', async (req: Request, res: Response) => {
-  const apiKey = (process.env.TMDB_API_KEY && process.env.TMDB_API_KEY !== 'YOUR_TMDB_API_KEY')
-    ? process.env.TMDB_API_KEY
-    : 'b0c22421f649bb77ecbfca44c207d727';
+  const apiKey = getTmdbApiKey();
 
   try {
     const tmdbRes = await fetch(`https://api.themoviedb.org/3/trending/movie/week?api_key=${apiKey}&language=en-US`, {
@@ -348,9 +357,7 @@ app.get('/api/tmdb/trending-movies', async (req: Request, res: Response) => {
  * Fetches top trending TV series up to 24 items.
  */
 app.get('/api/tmdb/trending-series', async (req: Request, res: Response) => {
-  const apiKey = (process.env.TMDB_API_KEY && process.env.TMDB_API_KEY !== 'YOUR_TMDB_API_KEY')
-    ? process.env.TMDB_API_KEY
-    : 'b0c22421f649bb77ecbfca44c207d727';
+  const apiKey = getTmdbApiKey();
 
   try {
     const tmdbRes = await fetch(`https://api.themoviedb.org/3/trending/tv/week?api_key=${apiKey}&language=en-US`, {
@@ -404,9 +411,7 @@ app.get('/api/tmdb/discover', async (req: Request, res: Response) => {
   const sortBy = (req.query.sort_by as string || 'popularity.desc').trim();
   const minRating = Number(req.query.vote_average_gte || 0);
 
-  const apiKey = (process.env.TMDB_API_KEY && process.env.TMDB_API_KEY !== 'YOUR_TMDB_API_KEY')
-    ? process.env.TMDB_API_KEY
-    : 'b0c22421f649bb77ecbfca44c207d727';
+  const apiKey = getTmdbApiKey();
 
   const genreIds = genresParam ? genresParam.split(',').map(g => Number(g.trim())).filter(Boolean) : [];
   const selectedYears = yearsParam ? yearsParam.split(',').map(y => y.trim()).filter(Boolean) : [];
@@ -1455,9 +1460,7 @@ app.get('/api/movie-details', async (req: Request, res: Response) => {
     let imdbId = '';
     let trailers: { name: string; key?: string; url?: string; site?: string; type?: string; embedUrl?: string; isIranAccessible?: boolean }[] = [];
 
-    const apiKey = (process.env.TMDB_API_KEY && process.env.TMDB_API_KEY !== 'YOUR_TMDB_API_KEY')
-      ? process.env.TMDB_API_KEY
-      : 'b0c22421f649bb77ecbfca44c207d727';
+    const apiKey = getTmdbApiKey();
 
     // 2. If tmdbId is missing but we have title, search TMDB
     if (!tmdbId && apiKey && title) {
