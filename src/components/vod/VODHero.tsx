@@ -79,7 +79,7 @@ export const VODHero: React.FC<VODHeroProps> = ({
   const primaryStreamLink = availableQualities[0]?.url || fullMovie?.hlsStreamUrl || item.sourceUrl || '';
 
   return (
-    <div className={`relative w-full bg-gradient-to-b from-[#0e1017]/90 via-[#0a0b10] to-[#08090d] border-b border-white/5 ${isCopyMenuOpen ? 'z-40' : 'z-10'}`}>
+    <div className={`relative w-full bg-gradient-to-b from-[#0e1017]/90 via-[#0a0b10] to-[#08090d] border-b border-white/5 ${isCopyMenuOpen ? 'z-50' : 'z-10'}`}>
       {/* Background Cinematic Art with Smooth Vignette */}
       <div className="absolute inset-0 pointer-events-none select-none overflow-hidden">
         {backdrop && (
@@ -94,7 +94,7 @@ export const VODHero: React.FC<VODHeroProps> = ({
       </div>
 
       {/* Hero Content Container */}
-      <div className="relative z-10 px-5 sm:px-8 pt-12 pb-6 sm:pt-14 sm:pb-8 flex flex-col sm:flex-row items-center sm:items-start gap-5 sm:gap-7">
+      <div className={`relative ${isCopyMenuOpen ? 'z-50' : 'z-10'} px-5 sm:px-8 pt-12 pb-6 sm:pt-14 sm:pb-8 flex flex-col sm:flex-row items-center sm:items-start gap-5 sm:gap-7`}>
         {/* Sleek Poster Thumbnail */}
         {poster && (
           <div className="relative shrink-0 w-28 sm:w-36 md:w-40 aspect-[2/3] rounded-2xl overflow-hidden shadow-2xl border border-white/10 hidden sm:block">
@@ -206,7 +206,7 @@ export const VODHero: React.FC<VODHeroProps> = ({
 
             {/* Copy Stream Link Dropdown Menu */}
             {(availableQualities.length > 0 || primaryStreamLink) && (
-              <div className={`relative ${isCopyMenuOpen ? 'z-50' : 'z-10'}`} ref={copyMenuRef}>
+              <div className={`relative ${isCopyMenuOpen ? 'z-[60]' : 'z-10'}`} ref={copyMenuRef}>
                 <button
                   type="button"
                   onClick={() => setIsCopyMenuOpen(!isCopyMenuOpen)}
@@ -225,7 +225,7 @@ export const VODHero: React.FC<VODHeroProps> = ({
 
                 {isCopyMenuOpen && (
                   <div
-                    className="absolute right-0 top-full mt-2 w-72 sm:w-80 bg-[#10121a] border border-zinc-700/90 rounded-2xl shadow-[0_25px_60px_rgba(0,0,0,0.95)] p-2.5 z-[100] animate-scale-up space-y-1.5 backdrop-blur-2xl"
+                    className="absolute left-0 top-full mt-2 w-72 sm:w-80 max-w-[calc(100vw-2.5rem)] bg-[#10121a] border border-zinc-700/90 rounded-2xl shadow-[0_25px_60px_rgba(0,0,0,0.95)] p-2.5 z-[100] animate-scale-up space-y-1.5 backdrop-blur-2xl"
                     onClick={(e) => e.stopPropagation()}
                     dir="rtl"
                   >
