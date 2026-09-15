@@ -181,10 +181,10 @@ export const VODStreamTab: React.FC<VODStreamTabProps> = ({
 
           {/* Loading Indicator */}
           {isSearchingAparat && (
-            <div className="p-6 rounded-2xl bg-zinc-900/40 border border-zinc-800 flex items-center justify-center gap-3">
+            <div className="p-5 rounded-2xl bg-zinc-900/60 border border-zinc-800 flex items-center justify-center gap-3">
               <RefreshCw className="w-4 h-4 text-amber-400 animate-spin" />
-              <span className="text-xs font-bold text-zinc-300">
-                در حال جستجوی کامل و استخراج کیفیت‌ها از آپارات...
+              <span className="text-xs font-bold text-zinc-200">
+                در حال جستجو در سرورهای آپارات...
               </span>
             </div>
           )}
@@ -394,29 +394,35 @@ export const VODStreamTab: React.FC<VODStreamTabProps> = ({
               <div className="flex items-center justify-between">
                 <span className="text-xs font-bold text-zinc-300 flex items-center gap-1.5">
                   <Layers className="w-3.5 h-3.5 text-amber-400" />
-                  <span>سایر نسخه‌ها و ویدیوهای مرتبط در آپارات:</span>
+                  <span>ویدیوهای یافت شده در آپارات:</span>
                 </span>
                 <span className="text-[10px] text-zinc-500">
-                  {alternateResults.length} مورد یافت شد
+                  {alternateResults.length} ویدیو آماده پخش
                 </span>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-[300px] overflow-y-auto pr-1 custom-scrollbar">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-h-[340px] overflow-y-auto pr-1 custom-scrollbar">
                 {alternateResults.map((alt) => (
                   <div
-                    key={alt.uid}
-                    className="p-2.5 rounded-xl bg-zinc-900/50 border border-zinc-800 hover:border-amber-400/40 hover:bg-zinc-900/90 transition-all flex items-center justify-between gap-3 group"
+                    key={alt.uid || alt.id}
+                    onClick={() => onSelectAlternate && onSelectAlternate(alt)}
+                    className="p-2.5 rounded-xl bg-zinc-900/60 border border-zinc-800 hover:border-amber-400 hover:bg-zinc-900/90 transition-all flex items-center justify-between gap-3 group cursor-pointer"
                   >
                     <div className="flex items-center gap-2.5 overflow-hidden">
                       {alt.poster ? (
-                        <img
-                          src={alt.poster}
-                          alt={alt.title}
-                          className="w-12 h-9 rounded-md object-cover bg-zinc-950 shrink-0 border border-zinc-800"
-                          referrerPolicy="no-referrer"
-                        />
+                        <div className="relative w-14 h-10 rounded-lg overflow-hidden shrink-0 bg-zinc-950 border border-zinc-800">
+                          <img
+                            src={alt.poster}
+                            alt={alt.title}
+                            className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                            referrerPolicy="no-referrer"
+                          />
+                          <div className="absolute inset-0 bg-black/30 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                            <Play className="w-3 h-3 fill-amber-400 text-amber-400" />
+                          </div>
+                        </div>
                       ) : (
-                        <div className="w-12 h-9 rounded-md bg-zinc-800 flex items-center justify-center shrink-0">
+                        <div className="w-14 h-10 rounded-lg bg-zinc-800 flex items-center justify-center shrink-0 border border-zinc-700/60">
                           <Tv className="w-4 h-4 text-zinc-500" />
                         </div>
                       )}
@@ -424,9 +430,17 @@ export const VODStreamTab: React.FC<VODStreamTabProps> = ({
                         <h5 className="text-[11px] font-bold text-zinc-200 truncate group-hover:text-amber-300 transition-colors">
                           {alt.title}
                         </h5>
-                        <div className="flex items-center gap-2 text-[10px] text-zinc-400 mt-0.5">
-                          {alt.durationFormatted && <span>{alt.durationFormatted}</span>}
-                          {alt.senderName && <span className="opacity-70 truncate">{alt.senderName}</span>}
+                        <div className="flex items-center gap-2 text-[10px] text-zinc-400 mt-0.5 flex-wrap">
+                          {alt.durationFormatted && (
+                            <span className="flex items-center gap-0.5">
+                              <Clock className="w-2.5 h-2.5 text-zinc-500" />
+                              <span>{alt.durationFormatted}</span>
+                            </span>
+                          )}
+                          <span className="badge px-1.5 py-0.2 rounded text-[9px] font-bold bg-amber-400/15 text-amber-400 border border-amber-400/30">
+                            پخش مستقیم
+                          </span>
+                          {alt.senderName && <span className="opacity-70 truncate max-w-[90px]">{alt.senderName}</span>}
                         </div>
                       </div>
                     </div>
@@ -434,11 +448,14 @@ export const VODStreamTab: React.FC<VODStreamTabProps> = ({
                     {onSelectAlternate && (
                       <button
                         type="button"
-                        onClick={() => onSelectAlternate(alt)}
-                        className="tv-focusable px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-amber-400 hover:text-black text-zinc-200 font-bold text-[10px] flex items-center gap-1 transition-all cursor-pointer shrink-0"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onSelectAlternate(alt);
+                        }}
+                        className="tv-focusable px-3 py-1.5 rounded-lg bg-amber-400 hover:bg-amber-300 text-black font-bold text-[10px] flex items-center gap-1 transition-all cursor-pointer shrink-0 shadow-sm"
                       >
-                        <Play className="w-2.5 h-2.5" />
-                        <span>انتخاب</span>
+                        <Play className="w-2.5 h-2.5 fill-black" />
+                        <span>پخش</span>
                       </button>
                     )}
                   </div>
@@ -448,22 +465,22 @@ export const VODStreamTab: React.FC<VODStreamTabProps> = ({
           )}
 
           {/* EMPTY STATE - WHEN NEITHER MOVIE NOR SERIES IS FOUND */}
-          {!fullMovie?.available && (!seriesData || !seriesData.available) && !isSearchingAparat && (
-            <div className="p-5 rounded-2xl bg-zinc-900/40 border border-zinc-800 space-y-3">
+          {!fullMovie?.available && (!seriesData || !seriesData.available) && (!alternateResults || alternateResults.length === 0) && !isSearchingAparat && (
+            <div className="p-5 rounded-2xl bg-zinc-900/40 border border-zinc-800 space-y-3 text-right">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
                   <h4 className="text-xs font-bold text-zinc-200">
-                    موردی یافت نشد
+                    ویدیویی در سرورهای ایرانی آپارات برای این عنوان یافت نشد.
                   </h4>
-                  <p className="text-[11px] text-zinc-400 mt-0.5">
-                    می‌توانید عنوان را در کادر جستجوی بالا تغییر دهید یا از سرور جهانی استفاده نمایید.
+                  <p className="text-[11px] text-zinc-400 mt-1">
+                    می‌توانید عنوان را در کادر جستجوی بالا تغییر دهید یا پخش را از سرور پرسرعت جهانی انجام دهید.
                   </p>
                 </div>
 
                 <button
                   type="button"
                   onClick={() => setStreamSourceTab('global')}
-                  className="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold inline-flex items-center gap-1.5 transition-all self-start sm:self-auto cursor-pointer"
+                  className="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold inline-flex items-center gap-1.5 transition-all self-start sm:self-auto cursor-pointer shrink-0"
                 >
                   <Globe className="w-3.5 h-3.5" />
                   <span>پخش از سرور جهانی</span>

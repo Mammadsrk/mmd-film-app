@@ -25,6 +25,14 @@ export interface MediaItem {
   isDirectExtractorDisabled?: boolean;
   siteBadge?: string;
   directUrl?: string;
+  download_sources?: Array<{
+    name?: string;
+    nameFa?: string;
+    url?: string;
+    quality?: string;
+    type?: string;
+  }>;
+  sources?: any[];
 }
 
 export interface SearchResult {
@@ -181,6 +189,13 @@ export interface MovieDetailsData {
   certification?: string;
   trailers: MovieTrailer[];
   sources: MovieSourceHub[];
+  download_sources?: Array<{
+    name?: string;
+    nameFa?: string;
+    url?: string;
+    quality?: string;
+    type?: string;
+  }>;
   imdbUrl?: string;
   tmdbUrl?: string;
   aparatUrl?: string;

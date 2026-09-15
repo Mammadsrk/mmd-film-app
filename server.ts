@@ -2045,221 +2045,113 @@ app.get('/api/aparat/episode-links', async (req: Request, res: Response) => {
 });
 
 /**
- * GET /api/aparat-search?q=...
- * Direct user search query across Iranian servers (Aparat & Namasha) for movies and series
+ * GET /api/aparat-search?query=... (or ?q=...)
+ * Server-side Aparat search proxy with bot-detection bypass headers and normalized results schema.
  */
 app.get('/api/aparat-search', async (req: Request, res: Response) => {
   try {
-    const q = ((req.query.q as string) || '').trim();
-    if (!q) {
-      return res.json({ success: false, error: 'Query is required' });
+    const query = ((req.query.query as string) || (req.query.q as string) || '').trim();
+    if (!query) {
+      return res.json({ success: false, data: [] });
     }
 
-    const isSeriesQuery = /سریال|فصل|قسمت|season|episode|series/i.test(q);
+    const headers = {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      'Accept': 'application/json',
+      'Referer': 'https://www.aparat.com/',
+    };
 
-    // 1. Run direct Aparat search & movie/series search in parallel
-    const [directVideos, movieResult, seriesResult] = await Promise.all([
-      // Direct search on Aparat API for exact query
-      (async () => {
-        try {
-          const searchUrl = `https://www.aparat.com/api/fa/v1/video/video/search/text/${encodeURIComponent(q)}`;
-          const sRes = await fetch(searchUrl, {
-            headers: {
-              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
-              'Referer': 'https://www.aparat.com/'
-            },
-            signal: AbortSignal.timeout(4000)
-          });
-          if (!sRes.ok) return [];
-          const data = await sRes.json();
-          const rawVideos = data?.included?.filter((x: any) => x.type === 'Video') || [];
-          return rawVideos;
-        } catch {
-          return [];
-        }
-      })(),
-      // Standard movie search (with dubbed/subbed variants)
-      searchBestFullMovie(q, q).catch(() => null),
-      // Series search if query suggests series
-      isSeriesQuery ? searchAparatSeries(q, q).catch(() => null) : Promise.resolve(null),
-    ]);
+    let rawData: any = null;
 
-    // Format alternate/top video results from Aparat
-    const alternateResults = directVideos
-      .slice(0, 15)
-      .map((v: any) => {
-        const dur = parseInt(v.attributes?.duration) || 0;
-        return {
-          uid: v.attributes?.uid || '',
-          title: v.attributes?.title || '',
-          durationFormatted: dur > 0 ? `${Math.round(dur / 60)} دقیقه` : '',
-          durationSec: dur,
-          poster: v.attributes?.big_poster || v.attributes?.medium_poster || v.attributes?.small_poster || '',
-          embedUrl: `https://www.aparat.com/video/video/embed/videohash/${v.attributes?.uid}/vt/frame`,
-          pageUrl: `https://www.aparat.com/v/${v.attributes?.uid}`,
-          senderName: v.attributes?.sender_name || 'آپارات',
-        };
-      })
-      .filter((v: any) => !!v.uid);
-
-    // If a full structured movie was found by searchBestFullMovie
-    if (movieResult && movieResult.available) {
-      return res.json({
-        success: true,
-        data: movieResult,
-        seriesData: seriesResult || undefined,
-        alternateResults,
-      });
-    }
-
-    // If seriesResult was found
-    if (seriesResult && seriesResult.available) {
-      return res.json({
-        success: true,
-        data: {
-          available: true,
-          title: q,
-          isSeries: true,
-          provider: 'Aparat/Namasha',
-          providerNameFa: 'سرورهای داخلی',
-        },
-        seriesData: seriesResult,
-        alternateResults,
-      });
-    }
-
-    // If no movieResult yet, but direct Aparat search returned videos:
-    // Extract full details and qualities for the best candidate (longest duration not blacklisted)
-    if (directVideos.length > 0) {
-      const candidates = directVideos.filter((v: any) => {
-        const title = v.attributes?.title || '';
-        return !BLACKLIST_KEYWORDS.some(b => title.includes(b));
-      });
-      const pool = candidates.length > 0 ? candidates : directVideos;
-      const sorted = [...pool].sort((a: any, b: any) => {
-        return (parseInt(b.attributes?.duration) || 0) - (parseInt(a.attributes?.duration) || 0);
-      });
-
-      const best = sorted[0];
-      if (best?.attributes?.uid) {
-        try {
-          const detailRes = await fetch(
-            `https://www.aparat.com/api/fa/v1/video/video/show/videohash/${best.attributes.uid}/watchtype/embed?pr=1&mf=1&referer=embed`,
-            {
-              headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
-                'Jsontype': 'simple',
-                'Referer': 'https://www.aparat.com/'
-              },
-              signal: AbortSignal.timeout(4000)
-            }
-          );
-
-          if (detailRes.ok) {
-            const detail = await detailRes.json();
-            const item = Array.isArray(detail?.data) ? detail.data[0] : detail?.data;
-            const rawObj = item?.attributes || item || {};
-
-            const fileLinkAll = rawObj.file_link_all;
-            let qualities: AparatQualityItem[] = [];
-            if (Array.isArray(fileLinkAll) && fileLinkAll.length > 0) {
-              qualities = fileLinkAll
-                .filter((f: any) => f.urls && f.urls[0])
-                .map((f: any) => ({
-                  text: f.text || `کیفیت ${f.profile || 'استاندارد'}`,
-                  size: f.size || '',
-                  profile: f.profile || '720p',
-                  url: f.urls[0],
-                }))
-                .reverse();
-            } else if (rawObj.file_link) {
-              qualities = [{
-                text: 'کیفیت اصلی (HD)',
-                size: '',
-                profile: 'HD',
-                url: rawObj.file_link,
-              }];
-            } else if (rawObj.hls_link || best.attributes?.hls_link) {
-              qualities = [{
-                text: 'پخش مستقیم (HLS)',
-                size: '',
-                profile: 'HLS',
-                url: rawObj.hls_link || best.attributes?.hls_link,
-              }];
-            }
-
-            const highestUrl = qualities[0]?.url || rawObj.file_link || '';
-            const hlsUrl = rawObj.hls_link || best.attributes?.hls_link || '';
-            const streamTarget = highestUrl || hlsUrl;
-            const dur = parseInt(best.attributes?.duration) || 0;
-            const title = rawObj.title || best.attributes?.title || q;
-            const isDub = detectIsDubbed(title);
-            const isSub = detectIsSubbed(title);
-
-            const directMovieItem: AparatFullMovieItem = {
-              available: true,
-              title,
-              uid: best.attributes.uid,
-              pageUrl: `https://www.aparat.com/v/${best.attributes.uid}`,
-              embedUrl: `https://www.aparat.com/video/video/embed/videohash/${best.attributes.uid}/vt/frame`,
-              durationFormatted: dur > 0 ? `${Math.round(dur / 60)} دقیقه` : '',
-              durationSec: dur,
-              poster: rawObj.big_poster || rawObj.medium_poster || best.attributes?.big_poster,
-              provider: 'Aparat',
-              providerNameFa: 'آپارات',
-              qualities,
-              hlsStreamUrl: hlsUrl,
-              senderName: rawObj.sender_name || best.attributes?.sender_name || 'آپارات',
-              vlcUrl: streamTarget ? `vlc://${streamTarget}` : undefined,
-              potPlayerUrl: streamTarget ? `potplayer://${streamTarget}` : undefined,
-              mxPlayerUrl: streamTarget ? `intent:${streamTarget}#Intent;package=com.mxtech.videoplayer.ad;type=video/*;end` : undefined,
-              isDubbed: isDub,
-              isSubbed: isSub,
-              versionType: isDub ? 'dubbed' : (isSub ? 'subbed' : 'original'),
-              maxQualityScore: parseQualityRank(qualities),
-            };
-
-            return res.json({
-              success: true,
-              data: directMovieItem,
-              alternateResults,
-            });
-          }
-        } catch (detailErr) {
-          console.warn('Direct Aparat video detail extraction error:', detailErr);
-        }
+    // 1. Try Aparat videobytag endpoint (standard public tag/text search)
+    try {
+      const u1 = `https://www.aparat.com/etc/api/videobytag/text/${encodeURIComponent(query)}`;
+      const res1 = await fetch(u1, { headers, signal: AbortSignal.timeout(5000) });
+      if (res1.ok) {
+        rawData = await res1.json();
       }
-    }
+    } catch {}
 
-    // Try series search as last resort if not tried already
-    if (!isSeriesQuery) {
+    // Fallback URL pattern if first attempt was empty
+    if (!rawData?.videobytag || !Array.isArray(rawData.videobytag) || rawData.videobytag.length === 0) {
       try {
-        const fallbackSeries = await searchAparatSeries(q, q);
-        if (fallbackSeries && fallbackSeries.available) {
-          return res.json({
-            success: true,
-            data: {
-              available: true,
-              title: q,
-              isSeries: true,
-              provider: 'Aparat/Namasha',
-              providerNameFa: 'سرورهای داخلی',
-            },
-            seriesData: fallbackSeries,
-            alternateResults,
-          });
+        const u2 = `https://www.aparat.com/etc/api/video/videobytag/text/${encodeURIComponent(query)}`;
+        const res2 = await fetch(u2, { headers, signal: AbortSignal.timeout(4000) });
+        if (res2.ok) {
+          rawData = await res2.json();
         }
       } catch {}
     }
 
+    let results: any[] = [];
+
+    // Map videobytag structure into clean normalized array
+    if (rawData?.videobytag && Array.isArray(rawData.videobytag) && rawData.videobytag.length > 0) {
+      results = rawData.videobytag
+        .filter((v: any) => v && (v.uid || v.id))
+        .map((v: any) => {
+          const uid = v.uid || v.id;
+          const dur = typeof v.duration === 'number' ? v.duration : parseInt(v.duration) || 0;
+          return {
+            id: v.id || uid,
+            title: v.title || '',
+            duration: dur,
+            durationFormatted: dur > 0 ? `${Math.round(dur / 60)} دقیقه` : '',
+            durationSec: dur,
+            poster: v.small_poster || v.big_poster || '',
+            watchUrl: `https://www.aparat.com/v/${uid}`,
+            embedUrl: `https://www.aparat.com/video/video/embed/videohash/${uid}/vt/frame`,
+            views: v.visit_cnt || 0,
+            uid: uid,
+            senderName: v.sender_name || 'آپارات',
+          };
+        });
+    }
+
+    // 2. If videobytag was empty, fallback to Aparat v1 search endpoint
+    if (results.length === 0) {
+      try {
+        const u3 = `https://www.aparat.com/api/fa/v1/video/video/search/text/${encodeURIComponent(query)}`;
+        const res3 = await fetch(u3, { headers, signal: AbortSignal.timeout(5000) });
+        if (res3.ok) {
+          const d3 = await res3.json();
+          const rawVideos = d3?.included?.filter((x: any) => x.type === 'Video') || [];
+          results = rawVideos
+            .filter((v: any) => v && (v.attributes?.uid || v.id))
+            .map((v: any) => {
+              const attr = v.attributes || {};
+              const uid = attr.uid || v.id;
+              const dur = parseInt(attr.duration) || 0;
+              return {
+                id: v.id || uid,
+                title: attr.title || '',
+                duration: dur,
+                durationFormatted: dur > 0 ? `${Math.round(dur / 60)} دقیقه` : '',
+                durationSec: dur,
+                poster: attr.big_poster || attr.medium_poster || attr.small_poster || '',
+                watchUrl: `https://www.aparat.com/v/${uid}`,
+                embedUrl: `https://www.aparat.com/video/video/embed/videohash/${uid}/vt/frame`,
+                views: attr.visit_cnt || 0,
+                uid: uid,
+                senderName: attr.sender_name || 'آپارات',
+              };
+            });
+        }
+      } catch (e3) {
+        console.warn('Aparat v1 search fallback failed:', e3);
+      }
+    }
+
     return res.json({
-      success: false,
-      message: 'موردی در آپارات یافت نشد. می‌توانید با کلمات کلیدی دیگر جستجو کنید.',
-      alternateResults,
+      success: true,
+      count: results.length,
+      data: results,
+      results,
+      alternateResults: results,
     });
   } catch (err: any) {
     console.error('aparat-search error:', err);
-    res.status(500).json({ success: false, error: err.message });
+    return res.status(200).json({ success: false, data: [] });
   }
 });
 

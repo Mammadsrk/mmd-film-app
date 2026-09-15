@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Star, CheckCircle, XCircle, Play, Film, Volume2, Subtitles, Loader2 } from 'lucide-react';
+import { Star, CheckCircle, XCircle, Play, Film, Volume2, Subtitles, Loader2, Download } from 'lucide-react';
 import { MediaItem, SourceAvailability } from '../types';
 import { fetchSourceAvailability, clientAvailabilityCache, getAvailabilityCacheKey } from '../lib/availabilityCache';
 
@@ -21,6 +21,7 @@ export const MovieCard: React.FC<MovieCardProps> = ({
   className = '',
 }) => {
   const [isInspecting, setIsInspecting] = useState<boolean>(false);
+  const [showSourcesTooltip, setShowSourcesTooltip] = useState<boolean>(false);
   const [availability, setAvailability] = useState<SourceAvailability[] | null>(null);
   const [isLoadingAvailability, setIsLoadingAvailability] = useState<boolean>(false);
   const [imgSrc, setImgSrc] = useState<string>(item.posterUrl || '');
@@ -28,6 +29,7 @@ export const MovieCard: React.FC<MovieCardProps> = ({
   const [imgError, setImgError] = useState<boolean>(false);
 
   const debounceTimerRef = useRef<any>(null);
+  const sourcesTooltipTimerRef = useRef<any>(null);
   const tvElementId = `movie-${sliderKey}-${item.id}`;
 
   useEffect(() => {
@@ -48,8 +50,8 @@ export const MovieCard: React.FC<MovieCardProps> = ({
   };
 
   /**
-   * Hover / Focus Inspection with 120ms response time as required.
-   * Checks shared client availability cache first.
+   * Hover / Focus Inspection with 120ms response time.
+   * Also starts 300ms timer for sleek download sources floating tooltip.
    */
   const handleInspectStart = () => {
     setIsInspecting(true);
@@ -57,6 +59,15 @@ export const MovieCard: React.FC<MovieCardProps> = ({
     if (debounceTimerRef.current) {
       clearTimeout(debounceTimerRef.current);
     }
+
+    if (sourcesTooltipTimerRef.current) {
+      clearTimeout(sourcesTooltipTimerRef.current);
+    }
+
+    // 300ms hover delay for download sources tooltip
+    sourcesTooltipTimerRef.current = setTimeout(() => {
+      setShowSourcesTooltip(true);
+    }, 300);
 
     debounceTimerRef.current = setTimeout(async () => {
       const cacheKey = getAvailabilityCacheKey(item.title);
@@ -80,16 +91,24 @@ export const MovieCard: React.FC<MovieCardProps> = ({
 
   const handleInspectEnd = () => {
     setIsInspecting(false);
+    setShowSourcesTooltip(false);
     if (debounceTimerRef.current) {
       clearTimeout(debounceTimerRef.current);
+    }
+    if (sourcesTooltipTimerRef.current) {
+      clearTimeout(sourcesTooltipTimerRef.current);
     }
   };
 
   useEffect(() => {
     const handleDismiss = () => {
       setIsInspecting(false);
+      setShowSourcesTooltip(false);
       if (debounceTimerRef.current) {
         clearTimeout(debounceTimerRef.current);
+      }
+      if (sourcesTooltipTimerRef.current) {
+        clearTimeout(sourcesTooltipTimerRef.current);
       }
     };
 
@@ -99,8 +118,14 @@ export const MovieCard: React.FC<MovieCardProps> = ({
       if (debounceTimerRef.current) {
         clearTimeout(debounceTimerRef.current);
       }
+      if (sourcesTooltipTimerRef.current) {
+        clearTimeout(sourcesTooltipTimerRef.current);
+      }
     };
   }, []);
+
+  // Safe sources calculation for download references
+  const downloadSources = (item as any).download_sources || (item as any).sources || [];
 
   return (
     <div
@@ -110,7 +135,7 @@ export const MovieCard: React.FC<MovieCardProps> = ({
           : `relative group flex-shrink-0 w-48 sm:w-56 md:w-64 transition-transform duration-300 hover:scale-[1.02] ${className}`
       }
     >
-      {/* Ambient Backdrop-Glow Depth - Strictly active on hover, no sticky focus-within hologram */}
+      {/* Ambient Backdrop-Glow Depth */}
       <div
         aria-hidden="true"
         className="absolute -inset-2 rounded-3xl bg-gradient-to-tr from-indigo-600/30 via-rose-600/25 to-amber-500/20 blur-xl opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none -z-10"
@@ -135,17 +160,43 @@ export const MovieCard: React.FC<MovieCardProps> = ({
             onSelect(item);
           }
         }}
-        /* 
-          LG webOS & Smart TV Compatibility:
-          1. Explicit height fallback to avoid bare aspect-ratio collapse.
-          2. .tv-focusable applies transform scale and clean focus glow.
-        */
-        className="tv-focusable relative w-full cursor-pointer rounded-2xl bg-[#090a12]/90 border border-white/10 group-hover:border-white/30 overflow-hidden shadow-2xl transition-all duration-300"
+        className="movie-card tv-focusable relative w-full cursor-pointer rounded-2xl bg-[#090a12]/90 border border-white/10 group-hover:border-white/30 overflow-hidden shadow-2xl transition-all duration-300"
         style={{
           minHeight: '350px',
           height: '350px',
         }}
       >
+        {/* Sleek Floating Download Sources Tooltip (>300ms hover) */}
+        {showSourcesTooltip && (
+          <div className="absolute top-2 inset-x-2 z-30 pointer-events-none animate-in fade-in zoom-in-95 duration-200">
+            <div className="p-2 rounded-xl bg-zinc-950/95 backdrop-blur-md border border-amber-500/50 shadow-2xl text-right">
+              <div className="flex items-center justify-between gap-1 mb-1 pb-1 border-b border-zinc-800 text-[10px] text-amber-400 font-bold font-persian">
+                <span className="flex items-center gap-1">
+                  <Download className="w-3 h-3 text-amber-400" />
+                  <span>مراجع دانلود:</span>
+                </span>
+                <span className="text-[8px] text-zinc-500">کیفیت عالی</span>
+              </div>
+              {Array.isArray(downloadSources) && downloadSources.length > 0 ? (
+                <div className="flex flex-wrap gap-1">
+                  {downloadSources.map((s: any, idx: number) => (
+                    <span
+                      key={idx}
+                      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-zinc-900 border border-zinc-800 text-[9px] text-zinc-200 font-persian"
+                    >
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0" />
+                      <span className="truncate max-w-[85px]">{s.name || s.nameFa || 'مرجع دانلود'}</span>
+                    </span>
+                  ))}
+                </div>
+              ) : (
+                <span className="text-[10px] text-zinc-300 font-persian block leading-tight">
+                  موجود در مراجع دانلود اختصاصی
+                </span>
+              )}
+            </div>
+          </div>
+        )}
         {/* Poster Media Box */}
         <div
           className="relative w-full overflow-hidden bg-zinc-950 media-card-poster"

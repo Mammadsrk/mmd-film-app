@@ -178,7 +178,8 @@ export const VODModal: React.FC<VODModalProps> = ({ item, onClose }) => {
 
   // Video playback states
   const [isPlayingVideo, setIsPlayingVideo] = useState<boolean>(false);
-  const [videoPlayMode, setVideoPlayMode] = useState<'trailer' | 'full_movie' | 'episode' | 'global'>('trailer');
+  const [videoPlayMode, setVideoPlayMode] = useState<'trailer' | 'full_movie' | 'episode' | 'global' | 'embed'>('trailer');
+  const [embedUrl, setEmbedUrl] = useState<string | null>(null);
   const [selectedTrailerIndex, setSelectedTrailerIndex] = useState<number>(0);
   const [selectedQualityUrl, setSelectedQualityUrl] = useState<string | null>(null);
   const [selectedQualityProfile, setSelectedQualityProfile] = useState<string | null>(null);
@@ -228,17 +229,43 @@ export const VODModal: React.FC<VODModalProps> = ({ item, onClose }) => {
     setAlternateAparatResults([]);
     setAparatSearchError(null);
 
-    // Auto-search Aparat if movie and new item
-    if (item.type !== 'tv' && isNewItem) {
+    // Auto-search Aparat when opening a movie
+    if (isNewItem) {
       setIsSearchingAparat(true);
-      fetch(`/api/aparat/full-movie?q=${encodeURIComponent(cleanFa)}&en=${encodeURIComponent(cleanTitle)}`)
+      setAparatSearchError(null);
+      const searchTitle = cleanFa || cleanTitle;
+      fetch(`/api/aparat-search?query=${encodeURIComponent(searchTitle)}`)
         .then((res) => res.json())
         .then((json) => {
-          if (isMounted && json.success && json.data) {
-            setAparatSearchResult(json.data);
+          if (!isMounted) return;
+          if (json.success && Array.isArray(json.data) && json.data.length > 0) {
+            setAlternateAparatResults(json.data);
+            const first = json.data[0];
+            const fullItem: AparatFullMovie = {
+              available: true,
+              title: first.title,
+              uid: first.uid || first.id,
+              pageUrl: first.watchUrl || `https://www.aparat.com/v/${first.uid || first.id}`,
+              durationFormatted: first.durationFormatted || '',
+              durationSec: first.duration || first.durationSec || 0,
+              poster: first.poster,
+              senderName: first.senderName || 'آپارات',
+              provider: 'Aparat',
+              providerNameFa: 'آپارات (سرور داخلی)',
+              qualities: [],
+              embedUrl: first.embedUrl,
+            };
+            setAparatSearchResult(fullItem);
+          } else {
+            setAlternateAparatResults([]);
+            setAparatSearchError('ویدیویی در سرورهای ایرانی آپارات برای این عنوان یافت نشد.');
           }
         })
-        .catch((err) => console.warn('Auto search Aparat failed:', err))
+        .catch((err) => {
+          if (!isMounted) return;
+          console.warn('Auto search Aparat failed:', err);
+          setAparatSearchError('ویدیویی در سرورهای ایرانی آپارات برای این عنوان یافت نشد.');
+        })
         .finally(() => {
           if (isMounted) setIsSearchingAparat(false);
         });
@@ -361,76 +388,85 @@ export const VODModal: React.FC<VODModalProps> = ({ item, onClose }) => {
     setIsSearchingAparat(true);
     setAparatSearchError(null);
     try {
-      const res = await fetch(`/api/aparat-search?q=${encodeURIComponent(q)}`);
+      const res = await fetch(`/api/aparat-search?query=${encodeURIComponent(q)}`);
       const json = await res.json();
-      if (json.success) {
-        if (json.data && json.data.available) {
-          setAparatSearchResult(json.data);
-          if (json.data.qualities?.length > 0) {
-            setSelectedQualityUrl(json.data.qualities[0].url);
-            setSelectedQualityProfile(json.data.qualities[0].profile || json.data.qualities[0].text);
-          }
-        }
-        if (json.seriesData && json.seriesData.available) {
-          setAparatSeriesResult(json.seriesData);
-          if (json.seriesData.seasons?.length > 0) {
-            setSelectedSeasonNumber(json.seriesData.seasons[0].seasonNumber);
-            setActivePlayingEpisode(json.seriesData.seasons[0].episodes?.[0] || null);
-          }
-        }
-        if (json.alternateResults && Array.isArray(json.alternateResults)) {
-          setAlternateAparatResults(json.alternateResults);
-        }
-        if (!json.data?.available && (!json.seriesData || !json.seriesData.available)) {
-          if (!json.alternateResults || json.alternateResults.length === 0) {
-            setAparatSearchError('ویدیویی برای این جستجو در آپارات یافت نشد. می‌توانید با عبارت دیگری جستجو کنید.');
-          }
-        }
+      if (json.success && Array.isArray(json.data) && json.data.length > 0) {
+        setAlternateAparatResults(json.data);
+        const first = json.data[0];
+        const fullItem: AparatFullMovie = {
+          available: true,
+          title: first.title,
+          uid: first.uid || first.id,
+          pageUrl: first.watchUrl || `https://www.aparat.com/v/${first.uid || first.id}`,
+          durationFormatted: first.durationFormatted || '',
+          durationSec: first.duration || first.durationSec || 0,
+          poster: first.poster,
+          senderName: first.senderName || 'آپارات',
+          provider: 'Aparat',
+          providerNameFa: 'آپارات (سرور داخلی)',
+          qualities: [],
+          embedUrl: first.embedUrl,
+        };
+        setAparatSearchResult(fullItem);
       } else {
-        setAparatSearchError(json.message || 'خطا در جستجوی آپارات');
+        setAlternateAparatResults([]);
+        setAparatSearchError('ویدیویی در سرورهای ایرانی آپارات برای این عنوان یافت نشد.');
       }
     } catch (err) {
       console.warn('Aparat search query failed:', err);
-      setAparatSearchError('خطا در ارتباط با سرور آپارات');
+      setAparatSearchError('ویدیویی در سرورهای ایرانی آپارات برای این عنوان یافت نشد.');
     } finally {
       setIsSearchingAparat(false);
     }
   };
 
-  // Select alternate video from Aparat results
+  // Select video from Aparat results & mount into player
   const handleSelectAlternateVideo = async (alt: any) => {
     if (!alt) return;
     setIsSearchingAparat(true);
     setAparatSearchError(null);
+
+    const uid = alt.uid || alt.id || (alt.watchUrl ? alt.watchUrl.split('/').pop() : '');
+    const embedUrl = alt.embedUrl || (uid ? `https://www.aparat.com/video/video/embed/videohash/${uid}/vt/frame` : '');
+
+    // Instantly mount embed in player
+    if (embedUrl) {
+      setEmbedUrl(embedUrl);
+      setVideoPlayMode('embed');
+      setIsPlayingVideo(true);
+    }
+
     try {
-      const res = await fetch(`/api/aparat/episode-links?uid=${encodeURIComponent(alt.uid)}&provider=Aparat`);
-      const json = await res.json();
-      if (json.success && json.data) {
-        const fullItem: AparatFullMovie = {
-          available: true,
-          title: alt.title,
-          uid: alt.uid,
-          pageUrl: alt.videoPageUrl || '',
-          durationFormatted: alt.durationFormatted || '',
-          durationSec: alt.durationSec || 0,
-          poster: alt.poster,
-          senderName: alt.senderName || undefined,
-          provider: 'Aparat',
-          providerNameFa: 'آپارات (سرور داخلی)',
-          qualities: json.data.qualities || [],
-          embedUrl: json.data.embedUrl || alt.embedUrl,
-          hlsStreamUrl: json.data.hlsStreamUrl,
-        };
-        setAparatSearchResult(fullItem);
-        if (fullItem.qualities?.length > 0) {
-          handlePlayQuality(fullItem.qualities[0]);
-        } else if (fullItem.hlsStreamUrl || fullItem.embedUrl) {
-          setVideoPlayMode('full_movie');
-          setIsPlayingVideo(true);
+      if (uid) {
+        const res = await fetch(`/api/aparat/episode-links?uid=${encodeURIComponent(uid)}&provider=Aparat`);
+        const json = await res.json();
+        if (json.success && json.data) {
+          const fullItem: AparatFullMovie = {
+            available: true,
+            title: alt.title,
+            uid: uid,
+            pageUrl: alt.watchUrl || alt.videoPageUrl || (uid ? `https://www.aparat.com/v/${uid}` : ''),
+            durationFormatted: alt.durationFormatted || '',
+            durationSec: alt.durationSec || alt.duration || 0,
+            poster: alt.poster,
+            senderName: alt.senderName || undefined,
+            provider: 'Aparat',
+            providerNameFa: 'آپارات (سرور داخلی)',
+            qualities: json.data.qualities || [],
+            embedUrl: json.data.embedUrl || embedUrl,
+            hlsStreamUrl: json.data.hlsStreamUrl,
+          };
+          setAparatSearchResult(fullItem);
+          if (fullItem.qualities?.length > 0) {
+            handlePlayQuality(fullItem.qualities[0]);
+          } else if (fullItem.hlsStreamUrl) {
+            setVideoPlayMode('full_movie');
+            setIsPlayingVideo(true);
+          }
         }
       }
     } catch (err) {
-      console.warn('Failed to load alternate video links:', err);
+      console.warn('Failed to load alternate video direct links:', err);
     } finally {
       setIsSearchingAparat(false);
     }
@@ -585,6 +621,8 @@ export const VODModal: React.FC<VODModalProps> = ({ item, onClose }) => {
                         ? `فصل ${activePlayingEpisode?.seasonNumber || 1} • قسمت ${activePlayingEpisode?.episodeNumber || 1}`
                         : videoPlayMode === 'global'
                         ? 'سرور جهانی هوشمند'
+                        : videoPlayMode === 'embed'
+                        ? 'پخش مستقیم آپارات'
                         : `فیلم کامل (${selectedQualityProfile || 'کیفیت بالا'})`}
                     </span>
                   </div>
@@ -650,6 +688,14 @@ export const VODModal: React.FC<VODModalProps> = ({ item, onClose }) => {
                       episodeNumber={activePlayingEpisode?.episodeNumber || 1}
                     />
                   </div>
+                ) : videoPlayMode === 'embed' && (embedUrl || fullMovie?.embedUrl) ? (
+                  <iframe
+                    src={embedUrl || fullMovie?.embedUrl}
+                    title={item.titleFa || item.title}
+                    className="w-full h-full border-0"
+                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
+                    allowFullScreen
+                  />
                 ) : videoPlayMode === 'trailer' ? (
                   currentTrailer?.embedUrl || currentTrailer?.url ? (
                     <iframe
