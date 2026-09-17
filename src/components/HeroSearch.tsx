@@ -29,6 +29,7 @@ interface HeroSearchProps {
   isMobile: boolean;
   onOpenTvHelper?: () => void;
   isTvMode?: boolean;
+  onOpenMoodRecommender?: () => void;
 }
 
 const TRENDING_SEARCHES = [
@@ -60,6 +61,7 @@ export const HeroSearch: React.FC<HeroSearchProps> = ({
   isMobile,
   onOpenTvHelper,
   isTvMode,
+  onOpenMoodRecommender,
 }) => {
   const inputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -254,8 +256,23 @@ export const HeroSearch: React.FC<HeroSearchProps> = ({
       {/* Cinematic Ambient Glow Background with Subtle Frosted Depth */}
       <div className="absolute top-0 left-1/2 -translate-x-1/2 w-full max-w-5xl h-72 bg-gradient-to-b from-indigo-950/20 via-slate-900/10 to-transparent blur-3xl pointer-events-none -z-10" />
 
-      {/* Header Branding - Centered with Minimalist Clear Logo (English Only) */}
-      <div className="w-full max-w-5xl px-4 relative z-10 flex items-center justify-center mb-6">
+      {/* Header Branding - Centered with Minimalist Clear Logo (English Only) & Vibe Trigger */}
+      <div className="w-full max-w-5xl px-4 relative z-10 flex items-center justify-between mb-6">
+        <div className="w-28 hidden sm:flex items-center">
+          {onOpenMoodRecommender && (
+            <button
+              id="btn-hero-mood-recommender-left"
+              type="button"
+              onClick={onOpenMoodRecommender}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-2xl bg-white/[0.04] hover:bg-white/[0.08] active:bg-white/[0.12] border border-white/10 hover:border-amber-400/40 text-xs text-amber-300 hover:text-white font-persian transition-all cursor-pointer shadow-sm group"
+              title="فیلم‌شناس هوشمند بر اساس حس و حال شما"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-amber-400 group-hover:scale-110 transition-transform" />
+              <span>فیلم‌شناس</span>
+            </button>
+          )}
+        </div>
+
         {/* Centered MMD FILM Branding (Click to Return Home) */}
         <button
           type="button"
@@ -296,6 +313,20 @@ export const HeroSearch: React.FC<HeroSearchProps> = ({
             </div>
           </div>
         </button>
+
+        <div className="w-28 flex items-center justify-end">
+          {onOpenMoodRecommender && (
+            <button
+              id="btn-hero-mood-recommender-mobile"
+              type="button"
+              onClick={onOpenMoodRecommender}
+              className="sm:hidden flex items-center gap-1.5 px-2.5 py-1.5 rounded-2xl bg-white/[0.05] border border-white/10 text-xs text-amber-300 font-persian"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+              <span>فیلم‌شناس</span>
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Central Frosted Glass Search Capsule & Dropdown */}
@@ -406,6 +437,35 @@ export const HeroSearch: React.FC<HeroSearchProps> = ({
               transition={{ duration: 0.18, ease: 'easeOut' }}
               className="absolute left-4 right-4 mt-2 p-4 rounded-3xl bg-zinc-950/95 border border-zinc-800/90 backdrop-blur-3xl shadow-[0_20px_50px_rgba(0,0,0,0.85)] z-50 overflow-hidden"
             >
+              {/* Vibe Discovery Banner in Drawer */}
+              {onOpenMoodRecommender && (
+                <div className="mb-4 p-3 rounded-2xl bg-gradient-to-r from-amber-500/10 via-indigo-600/15 to-purple-600/10 border border-amber-500/25 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-xl bg-amber-500/20 text-amber-300 flex items-center justify-center shrink-0">
+                      <Sparkles className="w-4 h-4 animate-pulse" />
+                    </div>
+                    <div className="text-right">
+                      <p className="text-xs font-bold text-white font-persian">
+                        نمی‌دانید چه اثری انتخاب کنید؟
+                      </p>
+                      <p className="text-[11px] text-zinc-400 font-persian">
+                        با فیلم‌شناس و پاسخ به ۴ پرسش حسی، شاهکار مورد نظرتان را بیابید
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsFocused(false);
+                      onOpenMoodRecommender();
+                    }}
+                    className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-amber-500 to-indigo-600 hover:from-amber-400 hover:to-indigo-500 text-white text-xs font-bold font-persian shrink-0 shadow transition-all hover:scale-102 cursor-pointer"
+                  >
+                    شروع فیلم‌شناس
+                  </button>
+                </div>
+              )}
+
               {/* Quick Genre & Feature Filters */}
               <div className="mb-4 pb-3 border-b border-zinc-800/70">
                 <div className="flex items-center justify-between mb-2">

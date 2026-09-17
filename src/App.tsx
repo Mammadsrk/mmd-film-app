@@ -11,6 +11,7 @@ import { VODModal } from './components/VODModal';
 import { TVRemoteHelper } from './components/TVRemoteHelper';
 import { AmbientBackground } from './components/AmbientBackground';
 import { GenreFilterModal, AVAILABLE_GENRES } from './components/GenreFilterModal';
+import { MoodRecommender } from './components/MoodRecommender';
 import { MovieCard } from './components/MovieCard';
 import { useSpatialNavigation } from './hooks/useSpatialNavigation';
 import { MediaItem, SearchResult } from './types';
@@ -39,6 +40,7 @@ export default function App() {
   // Modal & Navigation state
   const [activeMedia, setActiveMedia] = useState<MediaItem | null>(null);
   const [isTvHelperOpen, setIsTvHelperOpen] = useState<boolean>(false);
+  const [isMoodRecommenderOpen, setIsMoodRecommenderOpen] = useState<boolean>(false);
   const [isMobile, setIsMobile] = useState<boolean>(false);
 
   // Check screen width for mobile adaptation (< 768px)
@@ -176,6 +178,10 @@ export default function App() {
       setActiveMedia(null);
       return;
     }
+    if (isMoodRecommenderOpen) {
+      setIsMoodRecommenderOpen(false);
+      return;
+    }
     if (isGenreModalOpen) {
       setIsGenreModalOpen(false);
       return;
@@ -260,6 +266,7 @@ export default function App() {
         isMobile={isMobile}
         onOpenTvHelper={() => setIsTvHelperOpen(!isTvHelperOpen)}
         isTvMode={isTvMode}
+        onOpenMoodRecommender={() => setIsMoodRecommenderOpen(true)}
       />
 
       {/* Main Content Area */}
@@ -283,23 +290,43 @@ export default function App() {
           <div className="space-y-6 sm:space-y-8">
             {/* Sleek Minimalist Advanced Filter Bar with Action Button & Active Badges */}
             <div className="w-full max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-3">
-              <button
-                id="btn-open-genre-filter"
-                data-tv-id="btn-genre-filter"
-                type="button"
-                onClick={() => setIsGenreModalOpen(true)}
-                className="tv-focusable flex items-center gap-2.5 px-4 py-2.5 rounded-2xl bg-white/[0.05] hover:bg-white/[0.1] active:bg-white/[0.15] text-zinc-200 hover:text-white border border-white/10 hover:border-white/20 backdrop-blur-md shadow-lg transition-all group duration-200"
-              >
-                <SlidersHorizontal className="w-4 h-4 text-amber-400 group-hover:rotate-90 transition-transform duration-300" />
-                <span className="text-xs font-bold font-persian">
-                  {selectedGenreIds.length + selectedYears.length + (selectedType !== 'all' ? 1 : 0) > 0
-                    ? `فیلتر پیشرفته (${selectedGenreIds.length + selectedYears.length + (selectedType !== 'all' ? 1 : 0)} فیلتر فعال)`
-                    : 'فیلتر پیشرفته (ژانر، سال، نوع اثر)'}
-                </span>
-                {(selectedGenreIds.length > 0 || selectedYears.length > 0 || selectedType !== 'all') && (
-                  <span className="w-2 h-2 rounded-full bg-amber-400 shadow-[0_0_8px_rgba(245,158,11,0.8)] animate-pulse" />
-                )}
-              </button>
+              <div className="flex items-center gap-2.5 flex-wrap w-full sm:w-auto">
+                {/* Vibe / Mood Recommender Trigger Button */}
+                <button
+                  id="btn-open-mood-recommender"
+                  data-tv-id="btn-mood-recommender"
+                  type="button"
+                  onClick={() => setIsMoodRecommenderOpen(true)}
+                  className="tv-focusable flex items-center gap-2 px-4 py-2.5 rounded-2xl bg-gradient-to-r from-amber-500/15 via-indigo-600/20 to-purple-600/15 hover:from-amber-500/25 hover:to-indigo-600/30 active:scale-98 text-amber-200 hover:text-white border border-amber-500/30 hover:border-amber-400/50 backdrop-blur-md shadow-[0_4px_20px_rgba(245,158,11,0.12)] transition-all group duration-200 cursor-pointer"
+                >
+                  <Sparkles className="w-4 h-4 text-amber-400 animate-pulse group-hover:scale-110 transition-transform" />
+                  <span className="text-xs font-bold font-persian">
+                    فیلم‌شناس (پیشنهاد بر اساس مود)
+                  </span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-amber-400/25 text-amber-300 font-persian font-bold">
+                    هوشمند
+                  </span>
+                </button>
+
+                {/* Genre Filter Button */}
+                <button
+                  id="btn-open-genre-filter"
+                  data-tv-id="btn-genre-filter"
+                  type="button"
+                  onClick={() => setIsGenreModalOpen(true)}
+                  className="tv-focusable flex items-center gap-2.5 px-4 py-2.5 rounded-2xl bg-white/[0.05] hover:bg-white/[0.1] active:bg-white/[0.15] text-zinc-200 hover:text-white border border-white/10 hover:border-white/20 backdrop-blur-md shadow-lg transition-all group duration-200"
+                >
+                  <SlidersHorizontal className="w-4 h-4 text-amber-400 group-hover:rotate-90 transition-transform duration-300" />
+                  <span className="text-xs font-bold font-persian">
+                    {selectedGenreIds.length + selectedYears.length + (selectedType !== 'all' ? 1 : 0) > 0
+                      ? `فیلتر پیشرفته (${selectedGenreIds.length + selectedYears.length + (selectedType !== 'all' ? 1 : 0)} فیلتر فعال)`
+                      : 'فیلتر پیشرفته'}
+                  </span>
+                  {(selectedGenreIds.length > 0 || selectedYears.length > 0 || selectedType !== 'all') && (
+                    <span className="w-2 h-2 rounded-full bg-amber-400 shadow-[0_0_8px_rgba(245,158,11,0.8)] animate-pulse" />
+                  )}
+                </button>
+              </div>
 
               {/* Active Selected Filter Badges & Quick Clear */}
               {(selectedGenreIds.length > 0 || selectedYears.length > 0 || selectedType !== 'all') && (
@@ -501,6 +528,13 @@ export default function App() {
           setSelectedYears([]);
           setSelectedType('all');
         }}
+      />
+
+      {/* Interactive Vibe-Based Movie Recommendation Engine Modal */}
+      <MoodRecommender
+        isOpen={isMoodRecommenderOpen}
+        onClose={() => setIsMoodRecommenderOpen(false)}
+        onSelectMedia={handleSelectMedia}
       />
 
       {/* Embedded VOD Playback & Detail Modal */}

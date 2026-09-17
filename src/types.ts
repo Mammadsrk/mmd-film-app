@@ -285,3 +285,53 @@ export interface GlobalStreamingData {
   audioInfo: string;
   serverPingMs: number;
 }
+
+export interface YearRangeSelection {
+  id: string; // 'all' | '2020_2026' | '2010_2019' | '2000_2009' | '1990_1999' | 'classic' | 'custom'
+  titleFa: string;
+  minYear: number;
+  maxYear: number;
+  emoji?: string;
+  descFa?: string;
+}
+
+export interface VibeAnswerState {
+  mentalEnergy?: 'light' | 'medium' | 'heavy';
+  pacing?: 'fast' | 'steady' | 'slowburn';
+  endingTone?: 'uplifting' | 'bittersweet' | 'shocking';
+  setting?: 'futuristic' | 'gritty_urban' | 'nature_historical' | 'cozy_modern';
+  yearRange?: YearRangeSelection;
+}
+
+export interface RatedMovieEntry {
+  id: string;
+  tmdbId?: number;
+  title: string;
+  titleFa?: string;
+  rating: number; // 1 to 10
+  ratedAt: number;
+}
+
+export interface UserTasteVector {
+  likedGenres: Record<number, number>; // positive weights
+  dislikedGenres: Record<number, number>; // negative weights
+  likedKeywords: string[];
+  dislikedKeywords: string[];
+  ratedMovies: RatedMovieEntry[];
+  discardedIds: string[];
+  savedIds: string[];
+  unseenIds?: string[];
+}
+
+export interface RecommendedMovie extends MediaItem {
+  vibeScore?: number;
+  matchPercentage?: number;
+  vibeReason?: string;
+  vibeTags?: string[];
+  matchedKeywords?: string[];
+  isWatched?: boolean;
+  isUnseen?: boolean;
+  userRating?: number;
+  isSaved?: boolean;
+}
+

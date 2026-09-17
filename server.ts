@@ -14,6 +14,7 @@ import {
 } from './lib/sources.ts';
 import { resolveGlobalStreaming, generatePersianWebVTT } from './server/globalStreaming.ts';
 import { extractDirectSources } from './server/directExtractScraper.ts';
+import { getSmartRecommendations } from './server/vibeEngine.ts';
 
 const app = express();
 const PORT = 3000;
@@ -578,6 +579,106 @@ app.get('/api/tmdb/popular', async (req: Request, res: Response) => {
   const popular = [...CATALOG].sort((a, b) => b.rating - a.rating).slice(0, 10);
   res.json({ success: true, results: popular });
 });
+
+/**
+ * POST /api/smart-recommendations
+ * Interactive Vibe-Based Movie Recommendation Engine with Dynamic Taste Feedback Loop
+ */
+app.post('/api/smart-recommendations', async (req: Request, res: Response) => {
+  const apiKey = getTmdbApiKey();
+  const { vibeAnswers = {}, userTaste = {}, limit = 5 } = req.body || {};
+
+  try {
+    const recommendations = await getSmartRecommendations({
+      vibeAnswers,
+      userTaste,
+      limit: Math.min(30, Math.max(1, Number(limit) || 5)),
+      apiKey,
+    });
+    return res.json(recommendations);
+  } catch (err) {
+    console.error('Failed to compute smart recommendations:', err);
+    return res.status(500).json({
+      success: false,
+      error: 'خطا در محاسبه پیشنهادهای هوشمند فیلم',
+    });
+  }
+});
+
+/**
+ * GET /api/smart-recommendations (Quick discover fallback)
+ */
+app.get('/api/smart-recommendations', async (req: Request, res: Response) => {
+  const apiKey = getTmdbApiKey();
+  const mentalEnergy = (req.query.mentalEnergy as any) || 'medium';
+  const pacing = (req.query.pacing as any) || 'steady';
+  const endingTone = (req.query.endingTone as any) || 'uplifting';
+  const setting = (req.query.setting as any) || 'cozy_modern';
+
+  try {
+    const recommendations = await getSmartRecommendations({
+      vibeAnswers: { mentalEnergy, pacing, endingTone, setting },
+      userTaste: {},
+      limit: 5,
+      apiKey,
+    });
+    return res.json(recommendations);
+  } catch (err) {
+    console.error('Failed to compute smart recommendations:', err);
+    return res.status(500).json({
+      success: false,
+      error: 'خطا در محاسبه پیشنهادهای هوشمند فیلم',
+    });
+  }
+});
+
+/**
+ * GET /api/image-proxy
+ * Resilient image proxy for TMDB posters and remote images with caching
+ */
+app.get('/api/image-proxy', async (req: Request, res: Response) => {
+  const imageUrl = (req.query.url as string || '').trim();
+  if (!imageUrl) {
+    return res.status(400).send('URL is required');
+  }
+
+  try {
+    const parsed = new URL(imageUrl);
+    if (!['http:', 'https:'].includes(parsed.protocol)) {
+      return res.status(400).send('Invalid protocol');
+    }
+
+    const abortCtrl = new AbortController();
+    const timeout = setTimeout(() => abortCtrl.abort(), 6000);
+
+    const upstream = await fetch(imageUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'Referer': parsed.origin,
+      },
+      signal: abortCtrl.signal,
+    });
+    clearTimeout(timeout);
+
+    if (!upstream.ok) {
+      return res.redirect(imageUrl);
+    }
+
+    const contentType = upstream.headers.get('content-type') || 'image/jpeg';
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Cache-Control', 'public, max-age=86400, s-maxage=604800');
+
+    if (upstream.body) {
+      // @ts-ignore
+      const nodeStream = Readable.fromWeb(upstream.body as any);
+      return nodeStream.pipe(res);
+    }
+    return res.redirect(imageUrl);
+  } catch (err) {
+    return res.redirect(imageUrl);
+  }
+});
+
 
 interface AparatQualityItem {
   text: string;
