@@ -151,7 +151,7 @@ export const MoodRecommender: React.FC<MoodRecommenderProps> = ({
     }, 3500);
   };
 
-  // Step 1: Fetch 10 candidates for Calibration Phase
+  // Step 1: Fetch 20 candidates for Calibration Phase (4 stages of 5 movies)
   const fetchCalibrationPool = useCallback(
     async (currentVibe: VibeAnswerState, tasteToUse: UserTasteVector) => {
       setIsLoading(true);
@@ -162,7 +162,7 @@ export const MoodRecommender: React.FC<MoodRecommenderProps> = ({
           body: JSON.stringify({
             vibeAnswers: currentVibe,
             userTaste: tasteToUse,
-            limit: 10,
+            limit: 20,
           }),
         });
 
@@ -172,11 +172,13 @@ export const MoodRecommender: React.FC<MoodRecommenderProps> = ({
             const annotated: RecommendedMovie[] = data.results.map((m: RecommendedMovie) => {
               const isSaved = savedMovies.some((s) => s.id === m.id || (m.tmdbId && s.tmdbId === m.tmdbId));
               const rated = tasteToUse.ratedMovies.find((r) => r.id === m.id || (m.tmdbId && r.tmdbId === m.tmdbId));
+              const isUnseen = (tasteToUse.unseenIds || []).includes(m.id) || (m.tmdbId && (tasteToUse.unseenIds || []).includes(String(m.tmdbId)));
               return {
                 ...m,
                 isSaved,
                 isWatched: Boolean(rated),
                 userRating: rated?.rating,
+                isUnseen: Boolean(isUnseen),
               };
             });
             setCalibrationMovies(annotated);
@@ -409,6 +411,55 @@ export const MoodRecommender: React.FC<MoodRecommenderProps> = ({
     setFinalRecommendations((prev) => prev.filter((m) => m.id !== movie.id));
   };
 
+  // 4. Mark Movie as Unseen (گزینه ندیدم)
+  const handleMarkUnseen = (movie: RecommendedMovie) => {
+    const isCurrentlyUnseen = movie.isUnseen;
+    const newStatus = !isCurrentlyUnseen;
+
+    let updatedUnseenIds = [...(userTaste.unseenIds || [])];
+    if (newStatus) {
+      if (!updatedUnseenIds.includes(movie.id)) {
+        updatedUnseenIds.push(movie.id);
+      }
+      if (movie.tmdbId && !updatedUnseenIds.includes(String(movie.tmdbId))) {
+        updatedUnseenIds.push(String(movie.tmdbId));
+      }
+    } else {
+      updatedUnseenIds = updatedUnseenIds.filter((id) => id !== movie.id && id !== String(movie.tmdbId));
+    }
+
+    // If marked unseen, remove any existing watched rating
+    const updatedRatedMovies = newStatus
+      ? userTaste.ratedMovies.filter((r) => r.id !== movie.id && r.tmdbId !== movie.tmdbId)
+      : userTaste.ratedMovies;
+
+    const updatedTaste: UserTasteVector = {
+      ...userTaste,
+      unseenIds: updatedUnseenIds,
+      ratedMovies: updatedRatedMovies,
+    };
+
+    saveTasteVector(updatedTaste);
+
+    // Update local state
+    setCalibrationMovies((prev) =>
+      prev.map((m) =>
+        m.id === movie.id
+          ? {
+              ...m,
+              isUnseen: newStatus,
+              isWatched: newStatus ? false : m.isWatched,
+              userRating: newStatus ? undefined : m.userRating,
+            }
+          : m
+      )
+    );
+
+    if (newStatus) {
+      showToast('علامت‌گذاری شد: این اثر را ندیده‌اید.');
+    }
+  };
+
   // Active question data for steps 0 to 3
   const currentQuestion: VibeQuestion | undefined = currentStep <= 3 ? VIBE_QUESTIONS[currentStep] : undefined;
 
@@ -437,13 +488,19 @@ export const MoodRecommender: React.FC<MoodRecommenderProps> = ({
     return tags;
   }, [vibeAnswers]);
 
-  // Movies to display in Calibration Phase (sub-stages)
+  // Movies to display in Calibration Phase (4 stages of 5 movies each)
   const visibleCalibrationMovies = useMemo(() => {
     if (calibrationSubStage === 'stage1') {
       return calibrationMovies.slice(0, 5);
     }
     if (calibrationSubStage === 'stage2') {
       return calibrationMovies.slice(5, 10);
+    }
+    if (calibrationSubStage === 'stage3') {
+      return calibrationMovies.slice(10, 15);
+    }
+    if (calibrationSubStage === 'stage4') {
+      return calibrationMovies.slice(15, 20);
     }
     return calibrationMovies;
   }, [calibrationMovies, calibrationSubStage]);
@@ -944,65 +1001,101 @@ export const MoodRecommender: React.FC<MoodRecommenderProps> = ({
                   <div className="flex items-center gap-2 mb-1">
                     <Layers className="w-5 h-5 text-indigo-400" />
                     <h3 className="text-sm sm:text-base font-black text-white font-persian">
-                      مرحله ارزیابی سلیقه: نمره‌دهی به ۱۰ فیلم منتخب
+                      مرحله ارزیابی سلیقه: ۴ مرحله (هر مرحله ۵ فیلم)
                     </h3>
                     <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-persian font-bold">
-                      {ratedCountInCalibration} از ۱۰ فیلم نمره‌دهی شد
+                      {ratedCountInCalibration} از ۲۰ فیلم نمره‌دهی شد
                     </span>
                   </div>
                   <p className="text-xs text-zinc-400 font-persian leading-relaxed">
-                    فیلم‌هایی که قبلاً دیده‌اید را نمره دهید (یا آن‌هایی که ندیده‌اید را رد کنید). سپس دکمه محاسبه نهایی را بزنید تا ۵ شاهکار بدون نقص تحویل بگیرید!
+                    فیلم‌هایی که دیده‌اید را نمره دهید و آثاری که ندیده‌اید را با دکمه «ندیدم» مشخص کنید. در هر ۴ مرحله سلیقه شما دقیق‌تر کالیبره می‌شود!
                   </p>
                 </div>
 
-                {/* Sub-Stage Filter Tabs (Stage 1: 1-5, Stage 2: 6-10, All: 10) */}
-                <div className="flex items-center gap-2 shrink-0">
-                  <div className="flex items-center bg-black/40 rounded-xl p-1 border border-white/10 text-xs font-persian">
+                {/* Sub-Stage Filter Tabs (4 Stages: 1-5, 6-10, 11-15, 16-20, All: 20) */}
+                <div className="flex items-center gap-2 shrink-0 flex-wrap">
+                  <div className="flex items-center bg-black/40 rounded-xl p-1 border border-white/10 text-xs font-persian flex-wrap gap-1">
                     <button
                       type="button"
                       onClick={() => setCalibrationSubStage('stage1')}
-                      className={`px-3 py-1.5 rounded-lg transition-all ${
+                      className={`px-2.5 py-1.5 rounded-lg transition-all cursor-pointer ${
                         calibrationSubStage === 'stage1'
                           ? 'bg-indigo-600 text-white font-bold shadow'
                           : 'text-zinc-400 hover:text-white'
                       }`}
                     >
-                      بخش ۱ (فیلم‌های ۱ تا ۵)
+                      مرحله ۱ (۱ تا ۵)
                     </button>
                     <button
                       type="button"
                       onClick={() => setCalibrationSubStage('stage2')}
-                      className={`px-3 py-1.5 rounded-lg transition-all ${
+                      className={`px-2.5 py-1.5 rounded-lg transition-all cursor-pointer ${
                         calibrationSubStage === 'stage2'
                           ? 'bg-indigo-600 text-white font-bold shadow'
                           : 'text-zinc-400 hover:text-white'
                       }`}
                     >
-                      بخش ۲ (فیلم‌های ۶ تا ۱۰)
+                      مرحله ۲ (۶ تا ۱۰)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCalibrationSubStage('stage3')}
+                      className={`px-2.5 py-1.5 rounded-lg transition-all cursor-pointer ${
+                        calibrationSubStage === 'stage3'
+                          ? 'bg-indigo-600 text-white font-bold shadow'
+                          : 'text-zinc-400 hover:text-white'
+                      }`}
+                    >
+                      مرحله ۳ (۱۱ تا ۱۵)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCalibrationSubStage('stage4')}
+                      className={`px-2.5 py-1.5 rounded-lg transition-all cursor-pointer ${
+                        calibrationSubStage === 'stage4'
+                          ? 'bg-indigo-600 text-white font-bold shadow'
+                          : 'text-zinc-400 hover:text-white'
+                      }`}
+                    >
+                      مرحله ۴ (۱۶ تا ۲۰)
                     </button>
                     <button
                       type="button"
                       onClick={() => setCalibrationSubStage('all')}
-                      className={`px-2.5 py-1.5 rounded-lg transition-all ${
+                      className={`px-2 py-1.5 rounded-lg transition-all cursor-pointer ${
                         calibrationSubStage === 'all'
                           ? 'bg-indigo-600 text-white font-bold shadow'
                           : 'text-zinc-400 hover:text-white'
                       }`}
                     >
-                      همه (۱۰ فیلم)
+                      همه (۲۰ فیلم)
                     </button>
                   </div>
                 </div>
               </div>
 
-              {/* Action Bar before cards: Finalize trigger */}
+              {/* Action Bar before cards: Finalize trigger & Refresh */}
               <div className="mb-4 flex items-center justify-between flex-wrap gap-2">
-                <div className="flex items-center gap-1.5 text-xs text-zinc-400 font-persian">
-                  <Calendar className="w-3.5 h-3.5 text-amber-400" />
-                  <span>بازه سال ساخت: </span>
-                  <span className="text-zinc-200 font-bold font-mono">
-                    {vibeAnswers.yearRange?.titleFa || 'همه سال‌ها'}
-                  </span>
+                <div className="flex items-center gap-3 flex-wrap">
+                  <div className="flex items-center gap-1.5 text-xs text-zinc-400 font-persian">
+                    <Calendar className="w-3.5 h-3.5 text-amber-400" />
+                    <span>بازه سال ساخت: </span>
+                    <span className="text-zinc-200 font-bold font-mono">
+                      {vibeAnswers.yearRange?.titleFa || 'همه سال‌ها'}
+                    </span>
+                  </div>
+
+                  {/* Refresh Calibration Candidates Button */}
+                  <button
+                    type="button"
+                    onClick={() => fetchCalibrationPool(vibeAnswers, userTaste)}
+                    disabled={isLoading}
+                    className="tv-focusable flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-zinc-300 hover:text-white border border-white/10 text-xs font-persian transition-colors cursor-pointer"
+                    title="بارگذاری مجدد و تازه‌سازی ۲۰ فیلم کاندید"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 text-indigo-400 ${isLoading ? 'animate-spin' : ''}`} />
+                    <span>تازه‌سازی فیلم‌ها</span>
+                  </button>
                 </div>
 
                 <button
@@ -1034,20 +1127,29 @@ export const MoodRecommender: React.FC<MoodRecommenderProps> = ({
                     onClick={() => fetchCalibrationPool(vibeAnswers, userTaste)}
                     className="px-4 py-2 rounded-xl bg-indigo-600 text-white text-xs font-persian"
                   >
-                    دریافت مجدد لیست ۱۰ فیلم
+                    دریافت مجدد لیست ۲۰ فیلم
                   </button>
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
                   {visibleCalibrationMovies.map((movie, index) => {
-                    const globalIndex =
-                      calibrationSubStage === 'stage2' ? index + 6 : index + 1;
+                    const stageOffset =
+                      calibrationSubStage === 'stage2'
+                        ? 5
+                        : calibrationSubStage === 'stage3'
+                        ? 10
+                        : calibrationSubStage === 'stage4'
+                        ? 15
+                        : 0;
+                    const globalIndex = index + stageOffset + 1;
                     return (
                       <div
                         key={movie.id}
                         className={`bg-white/[0.03] hover:bg-white/[0.05] border rounded-2xl p-3 flex flex-col justify-between transition-all duration-300 relative group ${
                           movie.isWatched
                             ? 'border-emerald-500/50 shadow-[0_0_20px_rgba(16,185,129,0.15)] bg-emerald-950/20'
+                            : movie.isUnseen
+                            ? 'border-amber-500/40 bg-amber-950/15'
                             : 'border-white/10 hover:border-white/20'
                         }`}
                       >
@@ -1065,7 +1167,7 @@ export const MoodRecommender: React.FC<MoodRecommenderProps> = ({
                             }}
                             className="aspect-[2/3] rounded-xl overflow-hidden mb-2.5 relative bg-zinc-900 cursor-pointer shadow-md"
                           >
-                            <img
+                            <MoviePosterImage
                               src={movie.posterUrl}
                               alt={movie.title}
                               className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
@@ -1089,6 +1191,14 @@ export const MoodRecommender: React.FC<MoodRecommenderProps> = ({
                               <div className="absolute inset-x-0 bottom-0 py-1 bg-emerald-600/90 backdrop-blur-sm text-white text-[11px] font-persian font-bold text-center flex items-center justify-center gap-1">
                                 <Check className="w-3.5 h-3.5" />
                                 <span>دیده‌ام (نمره: {movie.userRating}/۱۰)</span>
+                              </div>
+                            )}
+
+                            {/* Unseen Status Overlay Badge */}
+                            {!movie.isWatched && movie.isUnseen && (
+                              <div className="absolute inset-x-0 bottom-0 py-1 bg-amber-600/90 backdrop-blur-sm text-white text-[11px] font-persian font-bold text-center flex items-center justify-center gap-1">
+                                <EyeOff className="w-3.5 h-3.5" />
+                                <span>ندیده‌ام ✓</span>
                               </div>
                             )}
                           </div>
@@ -1155,28 +1265,46 @@ export const MoodRecommender: React.FC<MoodRecommenderProps> = ({
                               </div>
                             </div>
                           ) : (
-                            <button
-                              type="button"
-                              onClick={() => setRatingTargetMovieId(movie.id)}
-                              className={`tv-focusable w-full py-1.5 px-2 rounded-xl border text-[11px] font-persian flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
-                                movie.isWatched
-                                  ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-300 font-bold'
-                                  : 'bg-white/5 hover:bg-white/10 border-white/10 text-zinc-300 hover:text-white'
-                              }`}
-                            >
-                              <Star
-                                className={`w-3.5 h-3.5 ${
+                            <div className="flex items-center gap-1.5">
+                              {/* Rate Button (دیده‌ام) */}
+                              <button
+                                type="button"
+                                onClick={() => setRatingTargetMovieId(movie.id)}
+                                className={`tv-focusable flex-1 py-1.5 px-2 rounded-xl border text-[11px] font-persian flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
                                   movie.isWatched
-                                    ? 'fill-emerald-400 text-emerald-400'
-                                    : 'text-amber-400'
+                                    ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-300 font-bold'
+                                    : 'bg-white/5 hover:bg-white/10 border-white/10 text-zinc-300 hover:text-white'
                                 }`}
-                              />
-                              <span>
-                                {movie.isWatched
-                                  ? `تغییر نمره (${movie.userRating})`
-                                  : 'دیده‌ام (ثبت نمره ۱-۱۰)'}
-                              </span>
-                            </button>
+                              >
+                                <Star
+                                  className={`w-3.5 h-3.5 ${
+                                    movie.isWatched
+                                      ? 'fill-emerald-400 text-emerald-400'
+                                      : 'text-amber-400'
+                                  }`}
+                                />
+                                <span>
+                                  {movie.isWatched
+                                    ? `نمره (${movie.userRating})`
+                                    : 'دیده‌ام'}
+                                </span>
+                              </button>
+
+                              {/* Unseen Button (گزینه ندیدم) */}
+                              <button
+                                type="button"
+                                onClick={() => handleMarkUnseen(movie)}
+                                className={`tv-focusable py-1.5 px-2 rounded-xl border text-[11px] font-persian flex items-center justify-center gap-1 transition-all cursor-pointer ${
+                                  movie.isUnseen
+                                    ? 'bg-amber-500/20 border-amber-500/50 text-amber-300 font-bold'
+                                    : 'bg-white/5 hover:bg-white/10 border-white/10 text-zinc-400 hover:text-zinc-200'
+                                }`}
+                                title="این فیلم را ندیده‌ام"
+                              >
+                                <EyeOff className="w-3.5 h-3.5" />
+                                <span>{movie.isUnseen ? 'ندیدم ✓' : 'ندیدم'}</span>
+                              </button>
+                            </div>
                           )}
 
                           <div className="flex items-center gap-1">
@@ -1198,7 +1326,7 @@ export const MoodRecommender: React.FC<MoodRecommenderProps> = ({
                               ) : (
                                 <>
                                   <Plus className="w-3 h-3 text-zinc-400" />
-                                  <span>ندیدم، ذخیره کن</span>
+                                  <span>ذخیره در لیست من</span>
                                 </>
                               )}
                             </button>
@@ -1237,6 +1365,10 @@ export const MoodRecommender: React.FC<MoodRecommenderProps> = ({
                     onClick={() => {
                       if (calibrationSubStage === 'stage1') {
                         setCalibrationSubStage('stage2');
+                      } else if (calibrationSubStage === 'stage2') {
+                        setCalibrationSubStage('stage3');
+                      } else if (calibrationSubStage === 'stage3') {
+                        setCalibrationSubStage('stage4');
                       } else {
                         fetchFinalRecommendations(vibeAnswers, userTaste);
                       }
@@ -1245,7 +1377,11 @@ export const MoodRecommender: React.FC<MoodRecommenderProps> = ({
                   >
                     <span>
                       {calibrationSubStage === 'stage1'
-                        ? 'بررسی ۵ فیلم دوم (بخش ۲)'
+                        ? 'مرحله بعدی: بررسی ۵ فیلم دوم (بخش ۲)'
+                        : calibrationSubStage === 'stage2'
+                        ? 'مرحله بعدی: بررسی ۵ فیلم سوم (بخش ۳)'
+                        : calibrationSubStage === 'stage3'
+                        ? 'مرحله بعدی: بررسی ۵ فیلم چهارم (بخش ۴)'
                         : 'مشاهده ۵ فیلم نهایی و اختصاصی من'}
                     </span>
                     <ChevronLeft className="w-4 h-4" />
@@ -1276,14 +1412,25 @@ export const MoodRecommender: React.FC<MoodRecommenderProps> = ({
                   ))}
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => fetchFinalRecommendations(vibeAnswers, userTaste)}
+                    disabled={isLoading}
+                    className="tv-focusable flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-amber-500/20 to-indigo-500/20 hover:from-amber-500/30 hover:to-indigo-500/30 text-amber-300 hover:text-white border border-amber-500/30 text-xs font-persian transition-colors cursor-pointer"
+                    title="پیشنهاد مجدد ۵ فیلم برتر دیگر"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
+                    <span>پیشنهادهای جدید (تازه‌سازی)</span>
+                  </button>
+
                   <button
                     type="button"
                     onClick={() => setCurrentStep(5)}
                     className="tv-focusable flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 text-zinc-300 hover:text-white border border-white/10 text-xs font-persian transition-colors"
                   >
                     <Layers className="w-3.5 h-3.5 text-zinc-400" />
-                    <span>ویرایش نمرات ۱۰ فیلم قبلی</span>
+                    <span>ویرایش نمرات ۲۰ فیلم قبلی</span>
                   </button>
 
                   <button
